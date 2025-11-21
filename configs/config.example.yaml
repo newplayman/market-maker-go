@@ -1,0 +1,11 @@
+env: dev
+risk:
+  maxOrderValueUSDT: 1000
+  maxNetExposure: 10
+gateway:
+  apiKey: "your_api_key"
+  apiSecret: "your_secret"
+  baseURL: "https://fapi.binance.com"
+inventory:
+  targetPosition: 0
+  maxDrift: 1
