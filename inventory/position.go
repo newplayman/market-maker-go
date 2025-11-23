@@ -29,6 +29,14 @@ func (t *Tracker) NetExposure() float64 {
 	return t.net
 }
 
+// SetExposure 将净仓位直接设置为给定值（用于对齐链路）。
+func (t *Tracker) SetExposure(net float64, avgCost float64) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.net = net
+	t.cost = avgCost
+}
+
 func (t *Tracker) AvgCost() float64 {
 	t.mu.RLock()
 	defer t.mu.RUnlock()

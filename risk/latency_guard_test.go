@@ -18,8 +18,11 @@ func TestLatencyGuard(t *testing.T) {
 	if err := guard.PreOrder("BTC", 1); err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
+	if err := guard.PreOrder("BTC", -1); err != nil {
+		t.Fatalf("sell should be allowed immediately: %v", err)
+	}
 	if err := guard.PreOrder("BTC", 1); err == nil {
-		t.Fatalf("expected too frequent")
+		t.Fatalf("expected too frequent on repeated buy")
 	}
 	fc.t = fc.t.Add(200 * time.Millisecond)
 	if err := guard.PreOrder("BTC", 1); err != nil {

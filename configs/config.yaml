@@ -1,0 +1,43 @@
+env: dev
+risk:
+  maxOrderValueUSDT: 1000
+  maxNetExposure: 10
+gateway:
+  apiKey: "${MM_GATEWAY_API_KEY}"
+  apiSecret: "${MM_GATEWAY_API_SECRET}"
+  baseURL: "https://fapi.binance.com"
+inventory:
+  targetPosition: 0
+  maxDrift: 0.2
+symbols:
+  ETHUSDC:
+    tickSize: 0.01
+    stepSize: 0.001
+    minQty: 0.001
+    maxQty: 8000
+    minNotional: 20
+    strategy:
+      minSpread: 0.003
+      baseSize: 0.006
+      targetPosition: 0
+      maxDrift: 0.2
+      quoteIntervalMs: 800
+      takeProfitPct: 0.003
+      staticFraction: 0.5
+      staticTicks: 10
+      staticRestMs: 2500
+      dynamicRestMs: 1500
+      dynamicRestTicks: 9
+    risk:
+      singleMax: 1
+      dailyMax: 0
+      netMax: 5
+      latencyMs: 150
+      pnlMin: 0
+      pnlMax: 0
+      reduceOnlyThreshold: 8
+      reduceOnlyMaxSlippagePct: 0.003
+      reduceOnlyMarketTriggerPct: 0
+      stopLoss: -15
+      haltSeconds: 30
+      shockPct: 0.01

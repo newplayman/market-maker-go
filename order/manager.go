@@ -14,9 +14,10 @@ type Gateway interface {
 
 // Manager 维护订单状态并通过 Gateway 下发。
 type Manager struct {
-	gw     Gateway
-	mu     sync.RWMutex
-	orders map[string]*Order
+	gw          Gateway
+	mu          sync.RWMutex
+	orders      map[string]*Order
+	constraints map[string]SymbolConstraints
 }
 
 func NewManager(gw Gateway) *Manager {
@@ -30,6 +31,12 @@ var ErrUnknownOrder = errors.New("unknown order")
 
 // Submit 同步调用 Gateway 下单并登记状态。
 func (m *Manager) Submit(o Order) (*Order, error) {
+	if o.Type == "" {
+		o.Type = "LIMIT"
+	}
+	if err := m.validateConstraint(o); err != nil {
+		return nil, err
+	}
 	if o.ID == "" {
 		o.ID = generateID(o.ClientID)
 	}
@@ -69,6 +76,17 @@ func (m *Manager) Cancel(id string) error {
 	return m.updateStatus(id, StatusCanceled, nil)
 }
 
+// Status 返回订单当前状态，如不存在则第二个返回值为 false。
+func (m *Manager) Status(id string) (Status, bool) {
+    m.mu.RLock()
+    defer m.mu.RUnlock()
+    o, ok := m.orders[id]
+    if !ok {
+        return "", false
+    }
+    return o.Status, true
+}
+
 func (m *Manager) updateStatus(id string, st Status, err error) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -89,4 +107,27 @@ func generateID(prefix string) string {
 		prefix = "ord"
 	}
 	return prefix + "-" + time.Now().UTC().Format("20060102150405.000000000")
+}
+
+// SetConstraints 设置各交易对的精度/名义限制。
+func (m *Manager) SetConstraints(c map[string]SymbolConstraints) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.constraints = make(map[string]SymbolConstraints, len(c))
+	for sym, sc := range c {
+		m.constraints[sym] = sc
+	}
+}
+
+func (m *Manager) validateConstraint(o Order) error {
+	m.mu.RLock()
+	c, ok := m.constraints[o.Symbol]
+	m.mu.RUnlock()
+	if !ok {
+		return nil
+	}
+	if o.Type != "" && (o.Type == "MARKET" || o.Type == "market") {
+		return nil
+	}
+	return c.Validate(o.Price, o.Quantity)
 }

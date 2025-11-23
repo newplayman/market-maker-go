@@ -34,3 +34,21 @@ func TestManagerSubmitAndCancel(t *testing.T) {
 		t.Fatalf("cancel err: %v", err)
 	}
 }
+
+func TestManagerConstraint(t *testing.T) {
+	gw := &mockGateway{}
+	m := NewManager(gw)
+	m.SetConstraints(map[string]SymbolConstraints{
+		"ETHUSDC": {
+			TickSize: 0.01,
+			StepSize: 0.001,
+			MinQty:   0.001,
+		},
+	})
+	if _, err := m.Submit(Order{Symbol: "ETHUSDC", Price: 100.01, Quantity: 0.002}); err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if _, err := m.Submit(Order{Symbol: "ETHUSDC", Price: 100.015, Quantity: 0.002}); err == nil {
+		t.Fatalf("expected ticksize error")
+	}
+}

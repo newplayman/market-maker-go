@@ -28,6 +28,11 @@ func main() {
 	latencyMs := flag.Int("latencyMs", 0, "risk: min interval between orders in ms (0 to disable)")
 	pnlMin := flag.Float64("pnlMin", 0, "risk: min pnl threshold (skip if 0)")
 	pnlMax := flag.Float64("pnlMax", 0, "risk: max pnl threshold (skip if 0)")
+	tickSize := flag.Float64("tickSize", 0, "symbol tick size (0 to skip precision check)")
+	stepSize := flag.Float64("stepSize", 0, "symbol step size (0 to skip precision check)")
+	minQty := flag.Float64("minQty", 0, "symbol min quantity")
+	maxQty := flag.Float64("maxQty", 0, "symbol max quantity")
+	minNotional := flag.Float64("minNotional", 0, "symbol min notional (price*qty)")
 	flag.Parse()
 
 	engine, _ := strategy.NewEngine(strategy.EngineConfig{
@@ -39,6 +44,17 @@ func main() {
 	tr := &inventory.Tracker{}
 	gw := &mockGateway{}
 	mgr := order.NewManager(gw)
+	if *tickSize > 0 || *stepSize > 0 || *minQty > 0 || *maxQty > 0 || *minNotional > 0 {
+		mgr.SetConstraints(map[string]order.SymbolConstraints{
+			*symbol: {
+				TickSize:    *tickSize,
+				StepSize:    *stepSize,
+				MinQty:      *minQty,
+				MaxQty:      *maxQty,
+				MinNotional: *minNotional,
+			},
+		})
+	}
 	base := 100.0
 	var guards []risk.Guard
 	guards = append(guards, risk.NewLimitChecker(&risk.Limits{SingleMax: *singleMax, DailyMax: *dailyMax, NetMax: *netMax}, nil))
@@ -63,6 +79,13 @@ func main() {
 		Inv:      tr,
 		OrderMgr: mgr,
 		Risk:     riskGuard,
+		Constraints: order.SymbolConstraints{
+			TickSize:    *tickSize,
+			StepSize:    *stepSize,
+			MinQty:      *minQty,
+			MaxQty:      *maxQty,
+			MinNotional: *minNotional,
+		},
 	}
 
 	rand.Seed(time.Now().UnixNano())

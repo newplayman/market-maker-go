@@ -34,6 +34,24 @@ gateway:
 inventory:
   targetPosition: 0.1
   maxDrift: 0.01
+symbols:
+  ETHUSDC:
+    tickSize: 0.01
+    stepSize: 0.001
+    minQty: 0.001
+    maxQty: 1
+    minNotional: 5
+    strategy:
+      minSpread: 0.0008
+      baseSize: 0.01
+      targetPosition: 0
+      maxDrift: 1
+      quoteIntervalMs: 1000
+    risk:
+      singleMax: 1
+      dailyMax: 1
+      netMax: 1
+      latencyMs: 0
 `)
 
 	now := time.Now()

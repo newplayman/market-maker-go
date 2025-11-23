@@ -62,6 +62,10 @@ func (c *ListenKeyClient) KeepAlive(listenKey string) error {
 		return err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusTooManyRequests+29 {
+		// Binance 429 / 418
+		return fmt.Errorf("keepalive rate limited: %d", resp.StatusCode)
+	}
 	if resp.StatusCode >= 300 {
 		return fmt.Errorf("keepalive status %d", resp.StatusCode)
 	}

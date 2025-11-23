@@ -18,7 +18,7 @@ func (h *BinanceWSHandler) OnDepth(symbol string, bid, ask float64) {
 		h.Svc.OnDepth(symbol, bid, ask, time.Now().UTC())
 	}
 	if h.Book != nil {
-		h.Book.ApplyDelta(map[float64]float64{bid: 1}, map[float64]float64{ask: 1})
+		h.Book.SetBest(bid, ask)
 	}
 }
 

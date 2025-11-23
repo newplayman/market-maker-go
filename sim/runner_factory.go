@@ -17,6 +17,11 @@ type RunnerConfig struct {
 	BaseSize       float64
 	TargetPosition float64
 	MaxDrift       float64
+	TickSize       float64
+	StepSize       float64
+	MinQty         float64
+	MaxQty         float64
+	MinNotional    float64
 
 	SingleMax      float64
 	DailyMax       float64
@@ -68,6 +73,17 @@ func BuildRunner(cfg RunnerConfig) (*Runner, error) {
 
 	gw := &mockGateway{}
 	mgr := order.NewManager(gw)
+	if cfg.Symbol != "" {
+		mgr.SetConstraints(map[string]order.SymbolConstraints{
+			cfg.Symbol: {
+				TickSize:    cfg.TickSize,
+				StepSize:    cfg.StepSize,
+				MinQty:      cfg.MinQty,
+				MaxQty:      cfg.MaxQty,
+				MinNotional: cfg.MinNotional,
+			},
+		})
+	}
 
 	r := &Runner{
 		Symbol:   cfg.Symbol,
@@ -76,6 +92,13 @@ func BuildRunner(cfg RunnerConfig) (*Runner, error) {
 		OrderMgr: mgr,
 		Risk:     guard,
 		Book:     ob,
+		Constraints: order.SymbolConstraints{
+			TickSize:    cfg.TickSize,
+			StepSize:    cfg.StepSize,
+			MinQty:      cfg.MinQty,
+			MaxQty:      cfg.MaxQty,
+			MinNotional: cfg.MinNotional,
+		},
 	}
 	return r, nil
 }

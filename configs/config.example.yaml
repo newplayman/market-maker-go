@@ -8,4 +8,36 @@ gateway:
   baseURL: "https://fapi.binance.com"
 inventory:
   targetPosition: 0
-  maxDrift: 1
+  maxDrift: 0.2
+symbols:
+  ETHUSDC:
+    tickSize: 0.01
+    stepSize: 0.001
+    minQty: 0.001
+    maxQty: 8000
+    minNotional: 20
+    strategy:
+      minSpread: 0.0006
+      baseSize: 0.001
+      targetPosition: 0
+      maxDrift: 0.2
+      quoteIntervalMs: 800
+      takeProfitPct: 0.001
+      staticFraction: 0.2
+      staticTicks: 5
+      staticRestMs: 1500
+      dynamicRestMs: 800
+      dynamicRestTicks: 5
+    risk:
+      singleMax: 1
+      dailyMax: 5
+      netMax: 5
+      latencyMs: 500
+      pnlMin: -5
+      pnlMax: 10
+      reduceOnlyThreshold: 3
+      reduceOnlyMaxSlippagePct: 0.002
+      reduceOnlyMarketTriggerPct: 0
+      stopLoss: -20
+      haltSeconds: 30
+      shockPct: 0.02

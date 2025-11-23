@@ -1,0 +1,6 @@
+{"event":"test_log","msg":"hello loki","ts":"$(date -u +%FT%TZ)"}
+2025-11-22T04:31:29Z {"event":"test","seq":1,"symbol":"ETHUSDC"}
+2025-11-22T04:31:29Z {"event":"test","seq":2,"symbol":"ETHUSDC"}
+2025-11-22T04:31:29Z {"event":"test","seq":3,"symbol":"ETHUSDC"}
+2025-11-22T04:31:29Z {"event":"test","seq":4,"symbol":"ETHUSDC"}
+2025-11-22T04:31:29Z {"event":"test","seq":5,"symbol":"ETHUSDC"}

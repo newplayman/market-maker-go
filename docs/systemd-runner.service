@@ -1,0 +1,26 @@
+[Unit]
+Description=Market Maker Runner
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/market-maker
+Environment="CONFIG_PATH=/opt/market-maker/configs/config.yaml"
+Environment="SYMBOL=ETHUSDC"
+Environment="DRY_RUN=false"
+Environment="REST_RATE=5"
+Environment="REST_BURST=10"
+Environment="METRICS_ADDR=:9100"
+Environment="LOG_PATH=/var/log/market-maker/runner.log"
+User=runner
+Group=runner
+ExecStart=/usr/bin/env bash /opt/market-maker/scripts/run_runner.sh
+Restart=always
+RestartSec=5
+LimitNOFILE=65535
+StandardOutput=append:/var/log/market-maker/runner.log
+StandardError=append:/var/log/market-maker/runner.log
+
+[Install]
+WantedBy=multi-user.target

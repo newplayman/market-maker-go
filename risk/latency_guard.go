@@ -5,7 +5,8 @@ import "time"
 // LatencyGuard 用于限制订单频率或快速重复下单。
 type LatencyGuard struct {
 	MinInterval time.Duration
-	lastTS      time.Time
+	lastBuyTS   time.Time
+	lastSellTS  time.Time
 	clock       Clock
 }
 
@@ -21,9 +22,13 @@ func (g *LatencyGuard) PreOrder(symbol string, deltaQty float64) error {
 		return nil
 	}
 	now := g.clock.Now()
-	if !g.lastTS.IsZero() && now.Sub(g.lastTS) < g.MinInterval {
+	target := &g.lastBuyTS
+	if deltaQty < 0 {
+		target = &g.lastSellTS
+	}
+	if !target.IsZero() && now.Sub(*target) < g.MinInterval {
 		return ErrTooFrequent
 	}
-	g.lastTS = now
+	*target = now
 	return nil
 }

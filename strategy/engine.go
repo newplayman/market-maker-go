@@ -71,6 +71,11 @@ func (e *Engine) QuoteZeroInventory(s MarketSnapshot, inv Inventory) Quote {
 	}
 }
 
+// BaseSize 返回当前策略的基础下单数量。
+func (e *Engine) BaseSize() float64 {
+	return e.cfg.BaseSize
+}
+
 // BacktestUpdate 用于离线回测：输入 mid 序列和仓位序列，输出报价曲线（供测试/调参）。
 func (e *Engine) BacktestUpdate(snaps []MarketSnapshot, invs []float64) []Quote {
 	res := make([]Quote, 0, len(snaps))

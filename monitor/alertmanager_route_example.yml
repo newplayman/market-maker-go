@@ -1,0 +1,33 @@
+route:
+  receiver: ops-webhook
+  group_by: ["alertname"]
+  group_wait: 10s
+  group_interval: 1m
+  repeat_interval: 30m
+  routes:
+    - matchers:
+        - severity="critical"
+      receiver: dingtalk
+
+receivers:
+  - name: ops-webhook
+    webhook_configs:
+      - url: http://127.0.0.1:19093/
+        send_resolved: true
+
+  - name: email
+    email_configs:
+      - to: noc@example.com
+        from: grafana@example.com
+        smarthost: smtp.example.com:587
+        auth_username: grafana@example.com
+        auth_password: CHANGE_ME
+        send_resolved: true
+
+  - name: dingtalk
+    webhook_configs:
+      - url: https://oapi.dingtalk.com/robot/send?access_token=REPLACE_ME
+        http_config:
+          headers:
+            Content-Type: application/json
+        send_resolved: true

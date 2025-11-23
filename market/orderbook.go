@@ -1,12 +1,25 @@
 package market
 
-import "sync"
+import (
+	"sort"
+	"sync"
+	"time"
+)
+
+// DepthSide 指定估算深度时的方向。
+type DepthSide int
+
+const (
+	DepthSideBid DepthSide = iota
+	DepthSideAsk
+)
 
 // OrderBook 维护简单的价格->数量映射。
 type OrderBook struct {
-	mu   sync.RWMutex
-	bids map[float64]float64 // price -> qty
-	asks map[float64]float64
+	mu         sync.RWMutex
+	bids       map[float64]float64 // price -> qty
+	asks       map[float64]float64
+	lastUpdate time.Time
 }
 
 func NewOrderBook() *OrderBook {
@@ -34,6 +47,22 @@ func (ob *OrderBook) ApplyDelta(bidDelta map[float64]float64, askDelta map[float
 			ob.asks[p] = q
 		}
 	}
+	ob.lastUpdate = time.Now()
+}
+
+// SetBest 重置 orderbook，仅保留当前最好 bid/ask。
+func (ob *OrderBook) SetBest(bid, ask float64) {
+	ob.mu.Lock()
+	defer ob.mu.Unlock()
+	ob.bids = make(map[float64]float64)
+	ob.asks = make(map[float64]float64)
+	if bid > 0 {
+		ob.bids[bid] = 1
+	}
+	if ask > 0 {
+		ob.asks[ask] = 1
+	}
+	ob.lastUpdate = time.Now()
 }
 
 // Best 返回最好买/卖价；若不存在则为 0。
@@ -61,4 +90,55 @@ func (ob *OrderBook) Mid() float64 {
 		return 0
 	}
 	return (bid + ask) / 2
+}
+
+// LastUpdate 返回最近一次 ApplyDelta 的时间。
+func (ob *OrderBook) LastUpdate() time.Time {
+	ob.mu.RLock()
+	defer ob.mu.RUnlock()
+	return ob.lastUpdate
+}
+
+// EstimateFillPrice 根据订单簿估算在指定方向成交 qty 所需触及的最差价位。
+// 若 depth 不足以完全成交，则返回能提供的最大数量及对应价位。
+func (ob *OrderBook) EstimateFillPrice(side DepthSide, qty float64) (price float64, cumulative float64) {
+	if qty <= 0 {
+		return 0, 0
+	}
+	ob.mu.RLock()
+	defer ob.mu.RUnlock()
+	var (
+		levels map[float64]float64
+		prices []float64
+	)
+	if side == DepthSideAsk {
+		levels = ob.asks
+	} else {
+		levels = ob.bids
+	}
+	if len(levels) == 0 {
+		return 0, 0
+	}
+	prices = make([]float64, 0, len(levels))
+	for p := range levels {
+		prices = append(prices, p)
+	}
+	if side == DepthSideAsk {
+		sort.Float64s(prices)
+	} else {
+		sort.Sort(sort.Reverse(sort.Float64Slice(prices)))
+	}
+	cumulative = 0
+	for _, p := range prices {
+		qtyAt := levels[p]
+		if qtyAt <= 0 {
+			continue
+		}
+		cumulative += qtyAt
+		price = p
+		if cumulative >= qty {
+			break
+		}
+	}
+	return price, cumulative
 }
