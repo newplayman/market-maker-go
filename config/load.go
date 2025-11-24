@@ -91,17 +91,26 @@ func Load(path string) (AppConfig, error) {
 
 // LoadWithEnvOverrides loads config then overrides sensitive fields from env vars if present.
 func LoadWithEnvOverrides(path string) (AppConfig, error) {
-	cfg, err := Load(path)
+	var cfg AppConfig
+	raw, err := os.ReadFile(path)
 	if err != nil {
-		return cfg, err
+		return cfg, fmt.Errorf("read config: %w", err)
 	}
+	if err := yaml.Unmarshal(raw, &cfg); err != nil {
+		return cfg, fmt.Errorf("parse yaml: %w", err)
+	}
+	// 先覆盖环境变量
 	if v := os.Getenv("MM_GATEWAY_API_KEY"); v != "" {
 		cfg.Gateway.APIKey = v
 	}
 	if v := os.Getenv("MM_GATEWAY_API_SECRET"); v != "" {
 		cfg.Gateway.APISecret = v
 	}
-	return cfg, Validate(cfg)
+	// 然后再验证
+	if err := Validate(cfg); err != nil {
+		return cfg, err
+	}
+	return cfg, nil
 }
 
 // Validate ensures required fields are present.

@@ -32,7 +32,7 @@ import (
 func main() {
 	cfgPath := flag.String("config", "configs/config.yaml", "配置文件路径")
 	symbol := flag.String("symbol", "ETHUSDC", "交易对（例如 ETHUSDC）")
-	dryRun := flag.Bool("dryRun", true, "仅日志输出，不真正下单")
+	dryRun := flag.Bool("dryRun", false, "仅日志输出，不真正下单")
 	restRate := flag.Float64("restRate", 5, "REST 限流：每秒令牌数")
 	restBurst := flag.Int("restBurst", 10, "REST 限流：最大突发令牌数")
 	metricsAddr := flag.String("metricsAddr", ":9100", "Prometheus metrics 监听地址，留空则关闭")
@@ -296,16 +296,20 @@ func main() {
 				return
 			case <-ticker.C:
 				mid := book.Mid()
+				// WebSocket应该实时更新book，只在数据过期时才用REST备份
 				staleThreshold := baseStale
 				if runner.RiskStateUnsafe() == sim.RiskStateReduceOnly {
 					staleThreshold = 500 * time.Millisecond
 				}
-				if (mid == 0 || time.Since(book.LastUpdate()) > staleThreshold) && restClient != nil {
-					if bid, ask, err := restClient.GetBestBidAsk(symbolUpper, 5); err == nil {
-						book.SetBest(bid, ask)
-						mid = book.Mid()
-					} else {
-						logEvent("depth_refresh_error", map[string]interface{}{"symbol": symbolUpper, "error": err.Error()})
+				// 只有当book数据过期或无效时才回退到REST API
+				if mid == 0 || time.Since(book.LastUpdate()) > staleThreshold {
+					if restClient != nil {
+						if bid, ask, err := restClient.GetBestBidAsk(symbolUpper, 5); err == nil {
+							book.SetBest(bid, ask)
+							mid = book.Mid()
+						} else {
+							logEvent("depth_refresh_error", map[string]interface{}{"symbol": symbolUpper, "error": err.Error()})
+						}
 					}
 				}
 				if mid == 0 {

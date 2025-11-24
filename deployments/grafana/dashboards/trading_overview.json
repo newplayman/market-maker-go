@@ -1,0 +1,267 @@
+{
+  "dashboard": {
+    "title": "交易总览 - Market Maker",
+    "tags": ["trading", "market-maker"],
+    "timezone": "browser",
+    "refresh": "5s",
+    "schemaVersion": 16,
+    "version": 1,
+    "panels": [
+      {
+        "id": 1,
+        "title": "实时PnL",
+        "type": "stat",
+        "gridPos": {"x": 0, "y": 0, "w": 6, "h": 4},
+        "targets": [
+          {
+            "expr": "trading_pnl_total",
+            "legendFormat": "总PnL",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "currencyUSD",
+            "decimals": 2,
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"value": null, "color": "red"},
+                {"value": 0, "color": "green"}
+              ]
+            }
+          }
+        },
+        "options": {
+          "graphMode": "area",
+          "colorMode": "value",
+          "orientation": "auto"
+        }
+      },
+      {
+        "id": 2,
+        "title": "持仓情况",
+        "type": "gauge",
+        "gridPos": {"x": 6, "y": 0, "w": 6, "h": 4},
+        "targets": [
+          {
+            "expr": "inventory_position_current",
+            "legendFormat": "当前持仓",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "max": 0.1,
+            "min": -0.1,
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"value": -0.1, "color": "red"},
+                {"value": -0.05, "color": "yellow"},
+                {"value": 0.05, "color": "green"},
+                {"value": 0.05, "color": "yellow"},
+                {"value": 0.1, "color": "red"}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 3,
+        "title": "订单统计（今日）",
+        "type": "stat",
+        "gridPos": {"x": 12, "y": 0, "w": 12, "h": 4},
+        "targets": [
+          {
+            "expr": "increase(order_placed_total[24h])",
+            "legendFormat": "总订单",
+            "refId": "A"
+          },
+          {
+            "expr": "increase(order_filled_total[24h])",
+            "legendFormat": "成交订单",
+            "refId": "B"
+          },
+          {
+            "expr": "increase(order_cancelled_total[24h])",
+            "legendFormat": "撤单",
+            "refId": "C"
+          },
+          {
+            "expr": "increase(order_filled_total[24h]) / increase(order_placed_total[24h]) * 100",
+            "legendFormat": "成交率%",
+            "refId": "D"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short"
+          },
+          "overrides": [
+            {
+              "matcher": {"id": "byName", "options": "成交率%"},
+              "properties": [
+                {"id": "unit", "value": "percent"}
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "id": 4,
+        "title": "PnL趋势图",
+        "type": "graph",
+        "gridPos": {"x": 0, "y": 4, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "trading_pnl_total",
+            "legendFormat": "累计PnL",
+            "refId": "A"
+          },
+          {
+            "expr": "trading_pnl_realized",
+            "legendFormat": "实现PnL",
+            "refId": "B"
+          },
+          {
+            "expr": "trading_pnl_unrealized",
+            "legendFormat": "未实现PnL",
+            "refId": "C"
+          }
+        ],
+        "yaxes": [
+          {
+            "format": "currencyUSD",
+            "label": "PnL (USD)"
+          },
+          {
+            "format": "short"
+          }
+        ],
+        "lines": true,
+        "fill": 1,
+        "linewidth": 2
+      },
+      {
+        "id": 5,
+        "title": "订单成交分布",
+        "type": "bargauge",
+        "gridPos": {"x": 12, "y": 4, "w": 6, "h": 8},
+        "targets": [
+          {
+            "expr": "increase(order_filled_total{side=\"buy\"}[1h])",
+            "legendFormat": "买单成交",
+            "refId": "A"
+          },
+          {
+            "expr": "increase(order_filled_total{side=\"sell\"}[1h])",
+            "legendFormat": "卖单成交",
+            "refId": "B"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short"
+          }
+        },
+        "options": {
+          "orientation": "horizontal",
+          "displayMode": "gradient"
+        }
+      },
+      {
+        "id": 6,
+        "title": "当前报价",
+        "type": "table",
+        "gridPos": {"x": 18, "y": 4, "w": 6, "h": 8},
+        "targets": [
+          {
+            "expr": "strategy_quote_price{side=\"bid\"}",
+            "legendFormat": "",
+            "refId": "A",
+            "instant": true
+          },
+          {
+            "expr": "strategy_quote_price{side=\"ask\"}",
+            "legendFormat": "",
+            "refId": "B",
+            "instant": true
+          },
+          {
+            "expr": "strategy_quote_size{side=\"bid\"}",
+            "legendFormat": "",
+            "refId": "C",
+            "instant": true
+          },
+          {
+            "expr": "strategy_quote_size{side=\"ask\"}",
+            "legendFormat": "",
+            "refId": "D",
+            "instant": true
+          }
+        ],
+        "transformations": [
+          {
+            "id": "organize",
+            "options": {
+              "excludeByName": {},
+              "indexByName": {},
+              "renameByName": {
+                "Value #A": "买价",
+                "Value #B": "卖价",
+                "Value #C": "买量",
+                "Value #D": "卖量"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "id": 7,
+        "title": "Spread 分布",
+        "type": "graph",
+        "gridPos": {"x": 0, "y": 12, "w": 12, "h": 6},
+        "targets": [
+          {
+            "expr": "strategy_spread_bps",
+            "legendFormat": "Spread (bps)",
+            "refId": "A"
+          },
+          {
+            "expr": "market_bid_ask_spread_bps",
+            "legendFormat": "市场Spread (bps)",
+            "refId": "B"
+          }
+        ],
+        "yaxes": [
+          {
+            "format": "short",
+            "label": "Basis Points"
+          }
+        ]
+      },
+      {
+        "id": 8,
+        "title": "成交量统计",
+        "type": "graph",
+        "gridPos": {"x": 12, "y": 12, "w": 12, "h": 6},
+        "targets": [
+          {
+            "expr": "rate(order_filled_volume_total[5m])",
+            "legendFormat": "成交量/分钟",
+            "refId": "A"
+          }
+        ],
+        "bars": true,
+        "yaxes": [
+          {
+            "format": "short",
+            "label": "Volume"
+          }
+        ]
+      }
+    ]
+  }
+}

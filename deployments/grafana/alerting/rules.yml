@@ -1,0 +1,37 @@
+groups:
+  - name: trading_alerts
+    interval: 30s
+    rules:
+      - alert: HighLoss
+        expr: trading_pnl_total < -100
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "高亏损告警"
+          description: "当前总PnL: {{ $value }} USDC"
+      
+      - alert: HighLatency
+        expr: histogram_quantile(0.95, order_latency_histogram) > 100
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "订单延迟过高"
+          description: "P95延迟: {{ $value }}ms"
+      
+      - alert: SystemDown
+        expr: up{job="market-maker"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "系统离线"
+      
+      - alert: RiskLevelHigh
+        expr: risk_level >= 3
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "风险等级升高"
