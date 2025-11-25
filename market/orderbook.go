@@ -99,6 +99,50 @@ func (ob *OrderBook) LastUpdate() time.Time {
 	return ob.lastUpdate
 }
 
+// BidPrices returns all bid prices sorted in descending order
+func (ob *OrderBook) BidPrices() []float64 {
+	ob.mu.RLock()
+	defer ob.mu.RUnlock()
+	
+	prices := make([]float64, 0, len(ob.bids))
+	for price := range ob.bids {
+		prices = append(prices, price)
+	}
+	
+	// Sort in descending order (highest bid first)
+	sort.Sort(sort.Reverse(sort.Float64Slice(prices)))
+	return prices
+}
+
+// AskPrices returns all ask prices sorted in ascending order
+func (ob *OrderBook) AskPrices() []float64 {
+	ob.mu.RLock()
+	defer ob.mu.RUnlock()
+	
+	prices := make([]float64, 0, len(ob.asks))
+	for price := range ob.asks {
+		prices = append(prices, price)
+	}
+	
+	// Sort in ascending order (lowest ask first)
+	sort.Float64s(prices)
+	return prices
+}
+
+// BidVolume returns the volume at a specific bid price
+func (ob *OrderBook) BidVolume(price float64) float64 {
+	ob.mu.RLock()
+	defer ob.mu.RUnlock()
+	return ob.bids[price]
+}
+
+// AskVolume returns the volume at a specific ask price
+func (ob *OrderBook) AskVolume(price float64) float64 {
+	ob.mu.RLock()
+	defer ob.mu.RUnlock()
+	return ob.asks[price]
+}
+
 // EstimateFillPrice 根据订单簿估算在指定方向成交 qty 所需触及的最差价位。
 // 若 depth 不足以完全成交，则返回能提供的最大数量及对应价位。
 func (ob *OrderBook) EstimateFillPrice(side DepthSide, qty float64) (price float64, cumulative float64) {

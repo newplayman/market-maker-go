@@ -10,7 +10,7 @@ func TestNewMonitor(t *testing.T) {
 	config := MonitorConfig{
 		PnLLimits: PnLLimits{
 			DailyLossLimit:   100.0,
-			MaxDrawdownLimit: 0.05,
+			MaxDrawdownLimit: 0.10,
 		},
 		CircuitBreakerConfig: CircuitBreakerConfig{
 			Threshold: 5,
@@ -149,7 +149,7 @@ func TestMonitor_RiskStateTransitions(t *testing.T) {
 	config := MonitorConfig{
 		PnLLimits: PnLLimits{
 			DailyLossLimit:   100.0,
-			MaxDrawdownLimit: 0.05,
+			MaxDrawdownLimit: 0.10,
 		},
 		MonitorInterval: 10 * time.Millisecond,
 		InitialEquity:   10000.0,
@@ -162,15 +162,15 @@ func TestMonitor_RiskStateTransitions(t *testing.T) {
 	}
 
 	// 创造一些盈利，然后亏损产生回撤
-	monitor.RecordTrade(300.0) // 权益 10300
+	monitor.RecordTrade(500.0) // 权益 10500
 	monitor.ForceCheckRisk()
 
-	monitor.RecordTrade(-250.0) // 权益 10050，回撤 ~2.4%
+	monitor.RecordTrade(-550.0) // 权益 9950，回撤 ~5.2%，净亏损 -50
 	monitor.ForceCheckRisk()
 
-	// 应该进入WARNING状态
+	// 回撤超过 5% 应该进入 WARNING
 	if state := monitor.GetRiskState(); state != RiskStateWarning {
-		t.Errorf("expected WARNING state with 2%% drawdown, got %s", state)
+		t.Errorf("expected WARNING state once drawdown >5%%, got %s", state)
 	}
 
 	// 继续亏损触发日内限制

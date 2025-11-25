@@ -1,0 +1,28 @@
+# 全局配置
+global:
+  scrape_interval:     15s # 默认抓取间隔
+  evaluation_interval: 15s # 规则评估间隔
+
+# 告警管理器配置
+alerting:
+  alertmanagers:
+  - static_configs:
+    - targets:
+      # - alertmanager:9093
+
+# 规则文件
+rule_files:
+  # - "first_rules.yml"
+  # - "second_rules.yml"
+
+# 抓取配置
+scrape_configs:
+  # Prometheus自身监控
+  - job_name: 'prometheus'
+    static_configs:
+    - targets: ['localhost:9090']
+
+  # Market Maker Go监控
+  - job_name: 'market-maker-go'
+    static_configs:
+    - targets: ['host.docker.internal:8080'] # market-maker-go默认指标端口

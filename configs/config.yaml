@@ -1,43 +1,44 @@
 env: production
 risk:
-  maxOrderValueUSDT: 30      # 最大单笔订单价值 (0.001 ETH * 3000 = 3 USDC)
-  maxNetExposure: 30         # 最大净敞口 (0.01 ETH * 3000 = 30 USDC)
+  maxOrderValueUSDT: 100
+  maxNetExposure: 1
 gateway:
-  apiKey: "JDTnMB72CILecXzST7uex7qcvy185lFzzzItsoAim4o4NFa6Ey1bil6JGeXMZaeS"
-  apiSecret: "RvaTepu3VWxkR5FbE0LOf2C6gIrppNWjDwYeyalKM9SnVtr8yawLFBSf7rfT2rVI"
-  baseURL: "https://fapi.binance.com"
-inventory:
-  targetPosition: 0          # 目标持仓 0
-  maxDrift: 0.3              # 最大漂移 30%
+  apiKey: test-key
+  apiSecret: test-secret
+  baseURL: https://fapi.binance.com
 symbols:
   ETHUSDC:
-    tickSize: 0.01           # 价格精度 0.01
-    stepSize: 0.001          # 数量精度 0.001
-    minQty: 0.001            # 最小数量 0.001 ETH
-    maxQty: 1000             # 最大数量
-    minNotional: 10          # 最小名义价值 10 USDC
+    tickSize: 0.01
+    stepSize: 0.001
+    minQty: 0.001
+    maxQty: 8000
+    minNotional: 20
     strategy:
-      minSpread: 0.002       # 最小价差 0.2% (20 bps)
-      baseSize: 0.008        # 基础订单大小 0.008 ETH (约22 USDC，满足20 USDC最小要求)
-      targetPosition: 0      # 目标持仓
-      maxDrift: 0.3          # 最大漂移
-      quoteIntervalMs: 500   # 500ms高频刷新
-      takeProfitPct: 0.005   # 止盈 0.5%
-      staticFraction: 0.5    # 静态挂单比例 50%
-      staticTicks: 5         # 静态tick容差
-      staticRestMs: 5000     # 静态休息 5秒
-      dynamicRestMs: 3000    # 动态休息 3秒
-      dynamicRestTicks: 3    # 动态tick容差
+      type: asmm
+      minSpread: 0.0006
+      quoteIntervalMs: 150
+      minSpreadBps: 6
+      maxSpreadBps: 40
+      minSpacingBps: 4
+      maxLevels: 3
+      baseSize: 0.01
+      sizeVolK: 0.5
+      targetPosition: 0
+      invSoftLimit: 3
+      invHardLimit: 5
+      invSkewK: 1.5
+      volK: 0.8
+      trendSpreadMultiplier: 1.5
+      highVolSpreadMultiplier: 2.0
+      avoidToxic: true
     risk:
-      singleMax: 0.01        # 单次最大 0.01 ETH
-      dailyMax: 5.0          # 日最大亏损 5 USDC
-      netMax: 0.01           # 最大净仓位 0.01 ETH (约30 USDC)
-      latencyMs: 200         # 延迟限制 200ms
-      pnlMin: -5.0           # PnL下限 -5 USDC
-      pnlMax: 100.0          # PnL上限 100 USDC
-      reduceOnlyThreshold: 0.008  # 减仓阈值 0.8%
-      reduceOnlyMaxSlippagePct: 0.003  # 减仓最大滑点 0.3%
-      reduceOnlyMarketTriggerPct: 0.01 # 市价单触发 1%
-      stopLoss: -10.0        # 止损 -10 USDC
-      haltSeconds: 300       # 熔断时间 5分钟
-      shockPct: 0.05         # 冲击阈值 5%
+      singleMax: 1
+      dailyMax: 10
+      netMax: 5
+      latencyMs: 500
+      pnlMin: -5
+      pnlMax: 10
+      reduceOnlyThreshold: 3
+      stopLoss: -20
+      haltSeconds: 30
+      shockPct: 0.02

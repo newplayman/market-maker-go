@@ -4,7 +4,7 @@
 # 说明：
 #   1. 默认安装到 /opt/market-monitoring。
 #   2. 需要 root 权限（创建用户、systemd 服务）。
-#   3. Prometheus 会抓取本机 9100 端口（runner metrics），并监听 9090。
+#   3. Prometheus 会抓取 runner metrics (默认 9200)，并监听 9090。
 #   4. Alertmanager 默认监听 9093，示例里会把告警写到本地日志；你可以替换为邮件/钉钉。
 #
 set -euo pipefail
@@ -59,7 +59,7 @@ global:
 scrape_configs:
   - job_name: "runner"
     static_configs:
-      - targets: ["127.0.0.1:9100"]
+      - targets: ["127.0.0.1:9200"]
   - job_name: "node"
     static_configs:
       - targets: ["127.0.0.1:9101"]

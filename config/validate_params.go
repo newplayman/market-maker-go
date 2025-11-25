@@ -27,6 +27,9 @@ func ValidateParams(cfg AppConfig) error {
 		if sc.Strategy.MinSpread <= 0 || sc.Strategy.BaseSize <= 0 {
 			return ErrInvalid("symbol " + sym + " strategy.minSpread/baseSize must be > 0")
 		}
+		if sc.Strategy.FeeBuffer < 0 {
+			return ErrInvalid("symbol " + sym + " strategy.feeBuffer must be >= 0")
+		}
 		if sc.Strategy.QuoteIntervalMs < 0 {
 			return ErrInvalid("symbol " + sym + " strategy.quoteIntervalMs must be >= 0")
 		}
@@ -35,6 +38,9 @@ func ValidateParams(cfg AppConfig) error {
 		}
 		if sc.Strategy.StaticTicks < 0 {
 			return ErrInvalid("symbol " + sym + " strategy.staticTicks must be >= 0")
+		}
+		if sc.Strategy.InventoryPressureThreshold < 0 || sc.Strategy.InventoryPressureStrength < 0 || sc.Strategy.InventoryPressureExponent < 0 {
+			return ErrInvalid("symbol " + sym + " strategy.inventoryPressure* must be >= 0")
 		}
 		if sc.Risk.SingleMax < 0 || sc.Risk.DailyMax < 0 || sc.Risk.NetMax < 0 {
 			return ErrInvalid("symbol " + sym + " risk limits must be >= 0")

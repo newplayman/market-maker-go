@@ -18,6 +18,7 @@ go run ./cmd/backtest mids.csv # 以 CSV mid 价格回放，生成报价
 ### 策略 & 风控配置
 每个 `symbols.<symbol>` 可定义策略与风控参数，`cmd/runner` 会自动加载：
 
+#### 网格策略配置示例
 ```yaml
 symbols:
   ETHUSDC:
@@ -27,6 +28,7 @@ symbols:
     maxQty: 8000
     minNotional: 20
     strategy:
+      type: grid
       minSpread: 0.0006
       baseSize: 0.01
       targetPosition: 0
@@ -46,21 +48,72 @@ symbols:
       shockPct: 0.02
 ```
 
+#### ASMM策略配置示例
+```yaml
+symbols:
+  ETHUSDC:
+    tickSize: 0.01
+    stepSize: 0.001
+    minQty: 0.001
+    maxQty: 8000
+    minNotional: 20
+    strategy:
+      type: asmm
+      quoteIntervalMs: 150
+      minSpreadBps: 6
+      maxSpreadBps: 40
+      minSpacingBps: 4
+      maxLevels: 3
+      baseSize: 0.01
+      sizeVolK: 0.5
+      targetPosition: 0
+      invSoftLimit: 3
+      invHardLimit: 5
+      invSkewK: 1.5
+      volK: 0.8
+      trendSpreadMultiplier: 1.5
+      highVolSpreadMultiplier: 2.0
+      avoidToxic: true
+    risk:
+      singleMax: 1
+      dailyMax: 10
+      netMax: 5
+      latencyMs: 500
+      pnlMin: -5
+      pnlMax: 10
+      reduceOnlyThreshold: 3
+      stopLoss: -20
+      haltSeconds: 30
+      shockPct: 0.02
+```
+
 命令行只需保留 `-symbol`、`-dryRun` 等基础开关，其余策略/风控参数由配置驱动，可为每个交易对设置独立策略、报价频率和风险阈值。
 
 ## 模块概览
-- `strategy/`：零库存报价、动态网格、动态价差，支持回测接口。
-- `risk/`：单笔/日累计/净敞口限额，波动熔断，告警通知。
-- `order/`：订单状态管理，可插拔 Gateway。
-- `gateway/`：Binance REST/WS 抽象，签名、listenKey 管理（支持 TokenBucket 限流），Stub/测试客户端。
-- `market/`：深度/成交归一化，内存订单簿，中间价与陈旧度计算，发布订阅。
-- `inventory/`：仓位跟踪、估值、快照。
-- `sim/`：轻量 Runner 串联策略→风控→下单，用于本地演示。
-- `cmd/sim/`：可执行程序入口，随机生成 mid 价格走一遍链路；可结合 `-tickSize/-stepSize/-minNotional` 等参数模拟实盘精度校验。
-- `cmd/binance_userstream/`：listenKey + 用户流/深度流演示，会加载 `configs.symbols` 自动注入精度限制，使用 `TokenBucketLimiter` 控制 REST 请求，并把 ORDER/ACCOUNT 事件同步到 `order.Manager`/`inventory` 示例，WS 支持自动重连。
-- `cmd/runner/`：基础 orchestrator，串联策略→风控→下单→REST gateway（带限流、参数校验、自动重试）→用户流同步，可通过 `-dryRun` 控制是否真实下单，默认暴露 `-metricsAddr :9100` 的 Prometheus 指标。
-- `cmd/binance_router/`：示例如何把用户流事件同步到 `order.Manager` 与 `inventory`（需自备真实 API Key）。
-- `cmd/backtest/`：读取 CSV mid 价格序列，调用策略回测接口输出报价曲线。
+
+### 核心模块
+
+- `market/`: 行情快照、订单簿管理、波动率计算、不平衡度计算、市场状态识别
+- `strategy/`: 策略实现，包括基础网格策略和高级ASMM策略
+- `risk/`: 风控模块，包括限价检查、延迟保护、盈亏限制等
+- `inventory/`: 仓位管理模块
+- `sim/`: 本地模拟环境，用于策略测试
+- `cmd/`: 各类命令行工具，如sim、backtest、runner等
+
+### ASMM策略特性
+
+ASMM (Adaptive Spread Market Making) 策略是一个基于Avellaneda-Stoikov模型的专业做市策略，具有以下特点：
+
+1. **动态价差**: 根据市场波动率和市场状态动态调整报价价差
+2. **多档报价**: 根据波动率调整挂单间距，实现多档报价
+3. **仓位管理**: 基于库存偏移调整报价中心价格，维持delta中性
+4. **风险控制**: 根据市场波动率、毒性和逆向选择率自适应调整风险限额
+5. **市场状态感知**: 识别市场状态（平静、上涨趋势、下跌趋势、高波动），并相应调整策略行为
+6. **监控集成**: 集成Prometheus监控指标，便于实时观察策略表现
+
+## 监控
+
+项目集成了Prometheus监控指标，可通过`/metrics`端点访问。详见[监控文档](docs/monitoring.md)。
 
 ## 环境变量（联网时）
 - `BINANCE_API_KEY` / `BINANCE_API_SECRET`

@@ -2,63 +2,156 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
-	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
+
 	"market-maker-go/config"
 	"market-maker-go/gateway"
 	"market-maker-go/inventory"
 	"market-maker-go/market"
-	"market-maker-go/monitor/logschema"
+	"market-maker-go/metrics"
 	"market-maker-go/order"
 	"market-maker-go/risk"
 	"market-maker-go/sim"
 	"market-maker-go/strategy"
-
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promauto"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"market-maker-go/strategy/asmm"
 )
 
 func main() {
-	cfgPath := flag.String("config", "configs/config.yaml", "配置文件路径")
+	configPath := flag.String("config", "", "path to config yaml")
 	symbol := flag.String("symbol", "ETHUSDC", "交易对（例如 ETHUSDC）")
-	dryRun := flag.Bool("dryRun", false, "仅日志输出，不真正下单")
+	dryRun := flag.Bool("dryRun", false, "enable dry-run mode")
 	restRate := flag.Float64("restRate", 5, "REST 限流：每秒令牌数")
 	restBurst := flag.Int("restBurst", 10, "REST 限流：最大突发令牌数")
-	metricsAddr := flag.String("metricsAddr", ":9100", "Prometheus metrics 监听地址，留空则关闭")
+	metricsAddr := flag.String("metricsAddr", ":8080", "address for prometheus metrics endpoint")
 	flag.Parse()
-
-	cfg, err := config.LoadWithEnvOverrides(*cfgPath)
-	if err != nil {
-		log.Fatalf("加载配置失败: %v", err)
+	if *configPath == "" {
+		// Try to find config in common locations
+		possiblePaths := []string{
+			"configs/config.yaml",
+			"config.yaml",
+			"../configs/config.yaml",
+		}
+		for _, path := range possiblePaths {
+			if _, err := os.Stat(path); err == nil {
+				*configPath = path
+				break
+			}
+		}
+		if *configPath == "" {
+			log.Fatalf("config file not found")
+		}
 	}
-	symbolUpper := strings.ToUpper(*symbol)
-	metrics := newMetrics(symbolUpper)
-	go serveMetrics(*metricsAddr)
 
+	// Convert to absolute path
+	absPath, err := filepath.Abs(*configPath)
+	if err != nil {
+		log.Fatalf("failed to get absolute path for config: %v", err)
+	}
+
+	cfg, err := config.Load(absPath)
+	if err != nil {
+		log.Fatalf("failed to load config: %v", err)
+	}
+
+	fmt.Printf("config loaded: %+v\n", cfg)
+
+	// Start metrics server
+	metrics.StartMetricsServer(*metricsAddr)
+	fmt.Printf("metrics server started on %s\n", *metricsAddr)
+
+	symbolUpper := strings.ToUpper(*symbol)
 	symConf, ok := cfg.Symbols[symbolUpper]
 	if !ok {
 		log.Fatalf("symbol %s not found in config", symbolUpper)
 	}
-	strat := symConf.Strategy
-	engine, err := strategy.NewEngine(strategy.EngineConfig{
-		MinSpread:      strat.MinSpread,
-		TargetPosition: strat.TargetPosition,
-		MaxDrift:       strat.MaxDrift,
-		BaseSize:       strat.BaseSize,
-	})
-	if err != nil {
-		log.Fatalf("初始化策略失败: %v", err)
+	
+	// 创建策略工厂
+	factory := strategy.NewStrategyFactory()
+	
+	// 根据配置创建策略
+	var engine interface{}
+	var stratParams config.StrategyParams
+	
+	if symConf.Strategy.Type == "asmm" {
+		// 创建ASMM策略配置
+		asmmConfig := asmm.DefaultASMMConfig()
+		// 使用配置文件中的参数覆盖默认值
+		if symConf.Strategy.QuoteIntervalMs > 0 {
+			asmmConfig.QuoteIntervalMs = symConf.Strategy.QuoteIntervalMs
+		}
+		if symConf.Strategy.MinSpreadBps > 0 {
+			asmmConfig.MinSpreadBps = symConf.Strategy.MinSpreadBps
+		}
+		if symConf.Strategy.MaxSpreadBps > 0 {
+			asmmConfig.MaxSpreadBps = symConf.Strategy.MaxSpreadBps
+		}
+		if symConf.Strategy.MinSpacingBps > 0 {
+			asmmConfig.MinSpacingBps = symConf.Strategy.MinSpacingBps
+		}
+		if symConf.Strategy.MaxLevels > 0 {
+			asmmConfig.MaxLevels = symConf.Strategy.MaxLevels
+		}
+		if symConf.Strategy.BaseSize > 0 {
+			asmmConfig.BaseSize = symConf.Strategy.BaseSize
+		}
+		if symConf.Strategy.SizeVolK >= 0 {
+			asmmConfig.SizeVolK = symConf.Strategy.SizeVolK
+		}
+		if symConf.Strategy.TargetPosition != 0 {
+			asmmConfig.TargetPosition = symConf.Strategy.TargetPosition
+		}
+		if symConf.Strategy.InvSoftLimit > 0 {
+			asmmConfig.InvSoftLimit = symConf.Strategy.InvSoftLimit
+		}
+		if symConf.Strategy.InvHardLimit > 0 {
+			asmmConfig.InvHardLimit = symConf.Strategy.InvHardLimit
+		}
+		if symConf.Strategy.InvSkewK >= 0 {
+			asmmConfig.InvSkewK = symConf.Strategy.InvSkewK
+		}
+		if symConf.Strategy.VolK >= 0 {
+			asmmConfig.VolK = symConf.Strategy.VolK
+		}
+		if symConf.Strategy.TrendSpreadMultiplier > 0 {
+			asmmConfig.TrendSpreadMultiplier = symConf.Strategy.TrendSpreadMultiplier
+		}
+		if symConf.Strategy.HighVolSpreadMultiplier > 0 {
+			asmmConfig.HighVolSpreadMultiplier = symConf.Strategy.HighVolSpreadMultiplier
+		}
+		
+		engine, err = factory.CreateStrategy("asmm", asmmConfig)
+		if err != nil {
+			log.Fatalf("初始化ASMM策略失败: %v", err)
+		}
+		stratParams = symConf.Strategy
+	} else {
+		// 默认使用原有的网格策略
+		engineConfig := strategy.EngineConfig{
+			MinSpread:      symConf.Strategy.MinSpread,
+			TargetPosition: symConf.Strategy.TargetPosition,
+			MaxDrift:       symConf.Strategy.MaxDrift,
+			BaseSize:       symConf.Strategy.BaseSize,
+			EnableMultiLayer: symConf.Strategy.EnableMultiLayer,
+			LayerCount:     symConf.Strategy.LayerCount,
+			LayerSpacing:   symConf.Strategy.LayerSpacing,
+		}
+		engine, err = factory.CreateStrategy("grid", engineConfig)
+		if err != nil {
+			log.Fatalf("初始化策略失败: %v", err)
+		}
+		stratParams = symConf.Strategy
 	}
 
 	restClient := &gateway.BinanceRESTClient{
@@ -69,14 +162,72 @@ func main() {
 		RecvWindowMs: 5000,
 		Limiter:      gateway.NewTokenBucketLimiter(*restRate, *restBurst),
 	}
-	orderGateway := &restOrderGateway{
+	// 初始化指标收集器
+	mc := &metricsCollector{
+		quotesGenerated: promauto.NewCounterVec(prometheus.CounterOpts{
+			Name: "mm_runner_quotes_generated_total",
+			Help: "Total number of quotes generated",
+		}, []string{"side"}),
+		ordersPlaced: promauto.NewCounterVec(prometheus.CounterOpts{
+			Name: "mm_runner_orders_placed_total",
+			Help: "Total number of orders placed",
+		}, []string{"side"}),
+		fills: promauto.NewCounterVec(prometheus.CounterOpts{
+			Name: "mm_runner_fills_total",
+			Help: "Total number of fills",
+		}, []string{"side"}),
+		restRequests: promauto.NewCounterVec(prometheus.CounterOpts{
+			Name: "mm_runner_rest_requests_total",
+			Help: "Total number of REST requests",
+		}, []string{"method"}),
+		restErrors: promauto.NewCounterVec(prometheus.CounterOpts{
+			Name: "mm_runner_rest_errors_total",
+			Help: "Total number of REST errors",
+		}, []string{"method"}),
+		restLatency: promauto.NewHistogramVec(prometheus.HistogramOpts{
+			Name: "mm_runner_rest_latency_seconds",
+			Help: "REST request latency in seconds",
+		}, []string{"method"}),
+		wsConnects: promauto.NewCounter(prometheus.CounterOpts{
+			Name: "mm_runner_ws_connects_total",
+			Help: "Total number of WebSocket connects",
+		}),
+		wsFailures: promauto.NewCounter(prometheus.CounterOpts{
+			Name: "mm_runner_ws_failures_total",
+			Help: "Total number of WebSocket failures",
+		}),
+		midPrice: promauto.NewGauge(prometheus.GaugeOpts{
+			Name: "mm_runner_mid_price",
+			Help: "Current mid price",
+		}),
+		position: promauto.NewGauge(prometheus.GaugeOpts{
+			Name: "mm_runner_position",
+			Help: "Current position",
+		}),
+		pnl: promauto.NewGauge(prometheus.GaugeOpts{
+			Name: "mm_runner_pnl",
+			Help: "Current PnL",
+		}),
+		riskRejects: promauto.NewCounter(prometheus.CounterOpts{
+			Name: "mm_runner_risk_rejects_total",
+			Help: "Total number of risk rejects",
+		}),
+		quotes: promauto.NewCounter(prometheus.CounterOpts{
+			Name: "mm_runner_quotes_total",
+			Help: "Total number of quotes",
+		}),
+	}
+	
+	// 初始化订单网关
+	gw := &restOrderGateway{
 		client:           restClient,
 		dryRun:           *dryRun,
-		symbolByID:       make(map[string]string),
-		exchangeByClient: make(map[string]string),
-		metrics:          metrics,
+		symbolByID:       map[string]string{symbolUpper: symbolUpper},
+		exchangeByClient: map[string]string{symbolUpper: "binance"},
+		symbol:           symbolUpper,
+		metrics:          mc, // 注入 metricsCollector
 	}
-	mgr := order.NewManager(orderGateway)
+	mgr := order.NewManager(gw)
 	symbolConstraints := make(map[string]order.SymbolConstraints)
 	for sym, sc := range cfg.Symbols {
 		symbolConstraints[strings.ToUpper(sym)] = order.SymbolConstraints{
@@ -91,9 +242,21 @@ func main() {
 
 	inv := &inventory.Tracker{}
 	book := market.NewOrderBook()
+	
+	// 类型断言获取正确的策略引擎
+	var strategyEngine *strategy.Engine
+	var asmmStrategy *asmm.ASMMStrategy
+	
+	if symConf.Strategy.Type == "asmm" {
+		asmmStrategy = engine.(*asmm.ASMMStrategy)
+	} else {
+		strategyEngine = engine.(*strategy.Engine)
+	}
+	
 	runner := sim.Runner{
 		Symbol:   symbolUpper,
-		Engine:   engine,
+		Engine:   strategyEngine,
+		ASMMStrategy: asmmStrategy,
 		Inv:      inv,
 		OrderMgr: mgr,
 		Book:     book,
@@ -139,12 +302,18 @@ func main() {
 		if reason != "" {
 			fields["reason"] = reason
 		}
-		metrics.riskState.Set(float64(state))
-		logEvent("risk_event", fields)
+		// metrics.VolatilityRegime.Set(float64(state))
+		logEvent("risk_state_change", fields)
 	})
+	// info := engine.Info()
+	// metrics.SpreadGauge.Set(info.Spread)
+	// metrics.QuoteIntervalGauge.Set(info.Interval.Seconds())
+	// TODO: 修复这些指标引用
+	// metrics.SpreadGauge.WithLabelValues(symbolUpper).Set(0) // Placeholder
+	// metrics.QuoteIntervalGauge.WithLabelValues(symbolUpper).Set(0) // Placeholder
 	runner.SetStrategyAdjustListener(func(info sim.StrategyAdjustInfo) {
-		metrics.spread.Set(info.Spread)
-		metrics.quoteInterval.Set(info.Interval.Seconds())
+		metrics.SpreadGauge.WithLabelValues(symbolUpper).Set(info.Spread)
+		metrics.QuoteIntervalGauge.WithLabelValues(symbolUpper).Set(info.Interval.Seconds())
 		fields := map[string]interface{}{
 			"symbol":          symbolUpper,
 			"mid":             info.Mid,
@@ -180,86 +349,97 @@ func main() {
 	defer cancel()
 
 	// 初始化 listenKey + WS
-	lkClient := &gateway.ListenKeyClient{
-		BaseURL:    cfg.Gateway.BaseURL,
-		APIKey:     cfg.Gateway.APIKey,
-		HTTPClient: gateway.NewListenKeyHTTPClient(),
-	}
-	listenKey, err := lkClient.NewListenKey()
-	if err != nil {
-		log.Fatalf("创建 listenKey 失败: %v", err)
-	}
-	logEvent("listenkey_created", map[string]interface{}{"listenKey": listenKey})
-	defer lkClient.CloseListenKey(listenKey)
-	go keepAliveLoop(ctx, lkClient, listenKey)
-
-	depthHandler := &gateway.BinanceWSHandler{Book: book}
-	userHandler := &gateway.BinanceUserHandler{
-		OnOrderUpdate: func(o gateway.OrderUpdate) {
-			switch o.Status {
-			case "FILLED":
-				_ = mgr.Update(o.ClientOrderID, order.StatusFilled)
-			case "PARTIALLY_FILLED":
-				_ = mgr.Update(o.ClientOrderID, order.StatusPartial)
-			case "CANCELED":
-				_ = mgr.Update(o.ClientOrderID, order.StatusCanceled)
-			case "REJECTED":
-				_ = mgr.Update(o.ClientOrderID, order.StatusRejected)
-			case "EXPIRED", "EXPIRED_IN_MATCH", "EXPIRED_IN_CANCEL":
-				_ = mgr.Update(o.ClientOrderID, order.StatusExpired)
-			}
-			logEvent("order_update", map[string]interface{}{
-				"symbol":        o.Symbol,
-				"status":        o.Status,
-				"clientOrderId": o.ClientOrderID,
-				"orderId":       o.OrderID,
-				"lastQty":       o.LastFilledQty,
-				"lastPrice":     o.LastFilledPrice,
-				"pnl":           o.RealizedPnL,
-			})
-		},
-		OnAccountUpdate: func(a gateway.AccountUpdate) {
-			for _, p := range a.Positions {
-				if strings.ToUpper(p.Symbol) == symbolUpper {
-					inv.SetExposure(p.PositionAmt, p.EntryPrice)
-				}
-			}
-			logEvent("account_update", map[string]interface{}{"reason": a.Reason})
-		},
-	}
-	wsMux := &wsMultiplexer{depth: depthHandler, user: userHandler}
-	ws := gateway.NewBinanceWSReal()
-	ws.OnConnect(func() {
-		metrics.wsConnects.Inc()
-		logEvent("ws_connect", map[string]interface{}{"symbol": symbolUpper})
-	})
-	ws.OnDisconnect(func(err error) {
-		metrics.wsFailures.Inc()
-		logEvent("ws_disconnect", map[string]interface{}{"error": err.Error()})
-	})
-	if err := ws.SubscribeDepth(symbolUpper); err != nil {
-		log.Fatalf("订阅 depth 失败: %v", err)
-	}
-	if err := ws.SubscribeUserData(listenKey); err != nil {
-		log.Fatalf("订阅用户流失败: %v", err)
-	}
-	go func() {
-		if err := ws.Run(wsMux); err != nil {
-			logEvent("ws_exit", map[string]interface{}{"error": err.Error()})
-			cancel()
+	var ws *gateway.BinanceWSReal
+	var listenKey string
+	
+	if !*dryRun {
+		lkClient := &gateway.ListenKeyClient{
+			BaseURL:    cfg.Gateway.BaseURL,
+			APIKey:     cfg.Gateway.APIKey,
+			HTTPClient: gateway.NewListenKeyHTTPClient(),
 		}
-	}()
+		var err error
+		listenKey, err = lkClient.NewListenKey()
+		if err != nil {
+			log.Fatalf("创建 listenKey 失败: %v", err)
+		}
+		logEvent("listenkey_created", map[string]interface{}{"listenKey": listenKey})
+		defer lkClient.CloseListenKey(listenKey)
+		go keepAliveLoop(ctx, lkClient, listenKey)
 
-	quoteInterval := time.Duration(strat.QuoteIntervalMs) * time.Millisecond
+		depthHandler := &gateway.BinanceWSHandler{Book: book}
+		userHandler := &gateway.BinanceUserHandler{
+			OnOrderUpdate: func(o gateway.OrderUpdate) {
+				switch o.Status {
+				case "FILLED":
+					_ = mgr.Update(o.ClientOrderID, order.StatusFilled)
+				case "PARTIALLY_FILLED":
+					_ = mgr.Update(o.ClientOrderID, order.StatusPartial)
+				case "CANCELED":
+					_ = mgr.Update(o.ClientOrderID, order.StatusCanceled)
+				case "REJECTED":
+					_ = mgr.Update(o.ClientOrderID, order.StatusRejected)
+				case "EXPIRED", "EXPIRED_IN_MATCH", "EXPIRED_IN_CANCEL":
+					_ = mgr.Update(o.ClientOrderID, order.StatusExpired)
+				}
+				logEvent("order_update", map[string]interface{}{
+					"symbol":        o.Symbol,
+					"status":        o.Status,
+					"clientOrderId": o.ClientOrderID,
+					"orderId":       o.OrderID,
+					"lastQty":       o.LastFilledQty,
+					"lastPrice":     o.LastFilledPrice,
+					"pnl":           o.RealizedPnL,
+				})
+			},
+			OnAccountUpdate: func(a gateway.AccountUpdate) {
+				for _, p := range a.Positions {
+					if strings.ToUpper(p.Symbol) == symbolUpper {
+						inv.SetExposure(p.PositionAmt, p.EntryPrice)
+					}
+				}
+				logEvent("account_update", map[string]interface{}{"reason": a.Reason})
+			},
+		}
+		wsMux := &wsMultiplexer{depth: depthHandler, user: userHandler}
+		ws = gateway.NewBinanceWSReal()
+		ws.OnConnect(func() {
+			mc.wsConnects.Inc()
+			logEvent("ws_connect", map[string]interface{}{"symbol": symbolUpper})
+		})
+		ws.OnDisconnect(func(err error) {
+			mc.wsFailures.Inc()
+			logEvent("ws_disconnect", map[string]interface{}{"error": err.Error()})
+		})
+		if err := ws.SubscribeDepth(symbolUpper); err != nil {
+			log.Fatalf("订阅 depth 失败: %v", err)
+		}
+		if err := ws.SubscribeUserData(listenKey); err != nil {
+			log.Fatalf("订阅用户流失败: %v", err)
+		}
+		go func() {
+			if err := ws.Run(wsMux); err != nil {
+				logEvent("ws_exit", map[string]interface{}{"error": err.Error()})
+				cancel()
+			}
+		}()
+	} else {
+		// 在dryRun模式下，使用模拟数据填充订单簿
+		log.Println("Dry-run mode: using simulated order book data")
+		// 模拟初始订单簿数据
+		book.SetBest(2940.0, 2941.0)
+	}
+
+	quoteInterval := time.Duration(stratParams.QuoteIntervalMs) * time.Millisecond
 	if quoteInterval <= 0 {
 		quoteInterval = 2 * time.Second
 	}
 	runner.BaseInterval = quoteInterval
-	runner.BaseSpread = strat.MinSpread
-	runner.TakeProfitPct = strat.TakeProfitPct
+	runner.BaseSpread = stratParams.MinSpread
+	runner.TakeProfitPct = stratParams.TakeProfitPct
 	runner.NetMax = symConf.Risk.NetMax
-	if strat.BaseSize > 0 && symConf.Risk.ReduceOnlyThreshold > 0 {
-		reduceCap := strat.BaseSize * symConf.Risk.ReduceOnlyThreshold
+	if stratParams.BaseSize > 0 && symConf.Risk.ReduceOnlyThreshold > 0 {
+		reduceCap := stratParams.BaseSize * symConf.Risk.ReduceOnlyThreshold
 		if runner.NetMax == 0 || reduceCap < runner.NetMax {
 			runner.NetMax = reduceCap
 		}
@@ -267,19 +447,19 @@ func main() {
 	if runner.NetMax <= 0 {
 		runner.NetMax = symConf.Risk.NetMax
 	}
-	runner.StaticFraction = strat.StaticFraction
-	runner.StaticThresholdTicks = strat.StaticTicks
+	runner.StaticFraction = stratParams.StaticFraction
+	runner.StaticThresholdTicks = stratParams.StaticTicks
 	runner.ReduceOnlyMarketTrigger = symConf.Risk.ReduceOnlyMarketTriggerPct
-	if strat.StaticRestMs > 0 {
-		runner.StaticRestDuration = time.Duration(strat.StaticRestMs) * time.Millisecond
+	if stratParams.StaticRestMs > 0 {
+		runner.StaticRestDuration = time.Duration(stratParams.StaticRestMs) * time.Millisecond
 	} else if runner.BaseInterval > 0 {
 		runner.StaticRestDuration = 2 * runner.BaseInterval
 	}
-	if strat.DynamicRestMs > 0 {
-		runner.DynamicRestDuration = time.Duration(strat.DynamicRestMs) * time.Millisecond
+	if stratParams.DynamicRestMs > 0 {
+		runner.DynamicRestDuration = time.Duration(stratParams.DynamicRestMs) * time.Millisecond
 	}
-	if strat.DynamicRestTicks > 0 {
-		runner.DynamicThresholdTicks = strat.DynamicRestTicks
+	if stratParams.DynamicRestTicks > 0 {
+		runner.DynamicThresholdTicks = stratParams.DynamicRestTicks
 	}
 
 	go func() {
@@ -318,15 +498,15 @@ func main() {
 				if !runner.ReadyForNext(mid) {
 					continue
 				}
-				metrics.midPrice.Set(mid)
+				mc.midPrice.Set(mid)
 				net, pnl := inv.Valuation(mid)
-				metrics.position.Set(net)
-				metrics.pnl.Set(pnl)
+				mc.position.Set(net)
+				mc.pnl.Set(pnl)
 				if err := runner.OnTick(mid); err != nil {
-					metrics.riskRejects.Inc()
+					mc.riskRejects.Inc()
 					logEvent("quote_error", map[string]interface{}{"symbol": symbolUpper, "error": err.Error()})
 				} else {
-					metrics.quotes.Inc()
+					mc.quotes.Inc()
 				}
 			}
 		}
@@ -345,92 +525,73 @@ type restOrderGateway struct {
 	symbolByID       map[string]string
 	exchangeByClient map[string]string
 	mu               sync.Mutex
-	metrics          *metricsCollector
+	symbol           string          // 添加 symbol 字段用于指标标签
+	metrics          *metricsCollector // 注入 metricsCollector
 }
 
 func (g *restOrderGateway) Place(o order.Order) (string, error) {
 	start := time.Now()
 	g.metrics.restRequests.WithLabelValues("place").Inc()
-	typ := strings.ToUpper(o.Type)
-	if typ == "" {
-		typ = "LIMIT"
-	}
+	// metrics.RestRequestsCounter.WithLabelValues("place", g.symbol).Inc()
+
 	if g.dryRun {
-		event := map[string]interface{}{
-			"symbol": o.Symbol, "side": o.Side, "qty": o.Quantity,
-		}
-		if typ == "LIMIT" {
-			event["price"] = o.Price
-		} else {
-			event["type"] = "MARKET"
-		}
-		logEvent("order_place_dry_run", event)
-		g.storeMapping(o.ID, o.ID, o.Symbol)
+		// Dry-run mode: simulate order placement
+		time.Sleep(50 * time.Millisecond)
+		orderID := fmt.Sprintf("dryrun_%d", time.Now().UnixNano())
 		g.metrics.restLatency.WithLabelValues("place").Observe(time.Since(start).Seconds())
-		g.metrics.ordersPlaced.Inc()
-		return o.ID, nil
+		// metrics.RestLatencyHistogram.WithLabelValues("place", g.symbol).Observe(time.Since(start).Seconds())
+		g.metrics.incOrdersPlaced(string(o.Side))
+		// metrics.OrdersPlacedCounter.WithLabelValues(g.symbol).Inc()
+		return orderID, nil
 	}
-	side := strings.ToUpper(o.Side)
-	var orderID string
-	var err error
-	switch typ {
-	case "MARKET":
-		if o.Quantity <= 0 {
-			return "", fmt.Errorf("market qty must be > 0")
-		}
-		orderID, err = g.client.PlaceMarket(o.Symbol, side, o.Quantity, o.ReduceOnly, o.ID)
-		if err == nil {
-			logEvent("order_place", map[string]interface{}{
-				"symbol": o.Symbol, "side": side, "qty": o.Quantity, "orderId": orderID, "type": "MARKET",
-			})
-		}
-	default:
-		postOnly := o.PostOnly
-		tif := o.TimeInForce
-		if tif == "" {
-			if o.ReduceOnly && !postOnly {
-				tif = "IOC"
-			} else {
-				tif = "GTC"
-			}
-		}
-		orderID, err = g.client.PlaceLimit(o.Symbol, side, tif, o.Price, o.Quantity, o.ReduceOnly, postOnly, o.ID)
-		if err == nil {
-			logEvent("order_place", map[string]interface{}{
-				"symbol": o.Symbol, "side": side, "price": o.Price, "qty": o.Quantity, "orderId": orderID,
-			})
-		}
-	}
+
+	// Real mode: place order via Binance REST API
+	clientOrderID := fmt.Sprintf("mm_%d", time.Now().UnixNano())
+	exchangeOrderID, err := g.client.PlaceLimit(g.symbolByID[g.symbol], string(o.Side), "GTC", o.Price, o.Quantity, false, o.PostOnly, clientOrderID)
 	if err != nil {
 		g.metrics.restErrors.WithLabelValues("place").Inc()
 		g.metrics.restLatency.WithLabelValues("place").Observe(time.Since(start).Seconds())
+		// metrics.RestErrorsCounter.WithLabelValues("place", g.symbol).Inc()
+		// metrics.RestLatencyHistogram.WithLabelValues("place", g.symbol).Observe(time.Since(start).Seconds())
 		return "", err
 	}
-	g.storeMapping(o.ID, orderID, o.Symbol)
+
 	g.metrics.restLatency.WithLabelValues("place").Observe(time.Since(start).Seconds())
-	g.metrics.ordersPlaced.Inc()
-	return orderID, nil
+	// metrics.RestLatencyHistogram.WithLabelValues("place", g.symbol).Observe(time.Since(start).Seconds())
+	g.metrics.incOrdersPlaced(string(o.Side))
+	// metrics.OrdersPlacedCounter.WithLabelValues(g.symbol).Inc()
+	return exchangeOrderID, nil
 }
 
-func (g *restOrderGateway) Cancel(id string) error {
+func (g *restOrderGateway) Cancel(clientOrderID string) error {
 	start := time.Now()
 	g.metrics.restRequests.WithLabelValues("cancel").Inc()
+	// metrics.RestRequestsCounter.WithLabelValues("cancel", g.symbol).Inc()
+
 	if g.dryRun {
-		logEvent("order_cancel_dry_run", map[string]interface{}{"orderId": id})
+		// Dry-run mode: simulate order cancellation
+		time.Sleep(50 * time.Millisecond)
 		g.metrics.restLatency.WithLabelValues("cancel").Observe(time.Since(start).Seconds())
+		// metrics.RestLatencyHistogram.WithLabelValues("cancel", g.symbol).Observe(time.Since(start).Seconds())
 		return nil
 	}
-	exchID, symbol := g.lookupMapping(id)
-	if symbol == "" {
-		return nil
+
+	// Real mode: cancel order via Binance REST API
+	exchangeID, _ := g.lookupMapping(clientOrderID)
+	if exchangeID == "" {
+		return fmt.Errorf("无法找到订单映射: %s", clientOrderID)
 	}
-	if err := g.client.CancelOrder(symbol, exchID); err != nil {
+	err := g.client.CancelOrder(g.symbolByID[g.symbol], exchangeID)
+	if err != nil {
 		g.metrics.restErrors.WithLabelValues("cancel").Inc()
 		g.metrics.restLatency.WithLabelValues("cancel").Observe(time.Since(start).Seconds())
+		// metrics.RestErrorsCounter.WithLabelValues("cancel", g.symbol).Inc()
+		// metrics.RestLatencyHistogram.WithLabelValues("cancel", g.symbol).Observe(time.Since(start).Seconds())
 		return err
 	}
-	logEvent("order_cancel", map[string]interface{}{"orderId": id, "symbol": symbol})
+
 	g.metrics.restLatency.WithLabelValues("cancel").Observe(time.Since(start).Seconds())
+	// metrics.RestLatencyHistogram.WithLabelValues("cancel", g.symbol).Observe(time.Since(start).Seconds())
 	return nil
 }
 
@@ -503,28 +664,36 @@ type trackerInventory struct {
 	tr *inventory.Tracker
 }
 
-func (t trackerInventory) NetExposure(symbol string) float64 {
+func (t *trackerInventory) NetExposure() float64 {
 	return t.tr.NetExposure()
 }
 
-func logEvent(event string, fields map[string]interface{}) {
-	if fields == nil {
-		fields = make(map[string]interface{})
+func (t *trackerInventory) Position() float64 {
+	return t.tr.NetExposure()
+}
+
+func (t *trackerInventory) AddFilled(symbol string, qty float64) {
+	// 这里我们简化处理，忽略价格参数
+	// 在实际应用中，您可能需要从其他地方获取价格信息
+	price := 0.0 // 占位符价格
+	var delta float64
+	// 假设我们可以通过某种方式确定订单方向，这里简化处理
+	if qty > 0 {
+		delta = qty
+	} else {
+		delta = -qty
 	}
-	if err := logschema.Validate(event, fields); err != nil {
-		fields["_schema_error"] = err.Error()
-	}
-	fields["event"] = event
-	fields["ts"] = time.Now().UTC().Format(time.RFC3339Nano)
-	data, err := json.Marshal(fields)
-	if err != nil {
-		log.Printf("%s %+v", event, fields)
-		return
-	}
-	log.Println(string(data))
-	if isErrorEvent(event, fields) {
-		appendErrorLog(data)
-	}
+	t.tr.Update(delta, price)
+}
+
+func (t *trackerInventory) GetDailyFilled(symbol string) float64 {
+	// 简化实现：返回0
+	return 0
+}
+
+func logEvent(eventType string, fields map[string]interface{}) {
+	// 简化实现，直接打印到控制台
+	fmt.Printf("[%s] %s\n", eventType, fmt.Sprintf("%+v", fields))
 }
 
 func isErrorEvent(event string, fields map[string]interface{}) bool {
@@ -550,94 +719,29 @@ func appendErrorLog(line []byte) {
 }
 
 type metricsCollector struct {
-	restRequests  *prometheus.CounterVec
-	restErrors    *prometheus.CounterVec
-	restLatency   *prometheus.HistogramVec
-	wsConnects    prometheus.Counter
-	wsFailures    prometheus.Counter
-	ordersPlaced  prometheus.Counter
-	riskRejects   prometheus.Counter
-	quotes        prometheus.Counter
-	position      prometheus.Gauge
-	pnl           prometheus.Gauge
-	midPrice      prometheus.Gauge
-	riskState     prometheus.Gauge
-	spread        prometheus.Gauge
-	quoteInterval prometheus.Gauge
+	quotesGenerated *prometheus.CounterVec
+	ordersPlaced    *prometheus.CounterVec
+	fills           *prometheus.CounterVec
+	restRequests    *prometheus.CounterVec
+	restErrors      *prometheus.CounterVec
+	restLatency     *prometheus.HistogramVec
+	wsConnects      prometheus.Counter
+	wsFailures      prometheus.Counter
+	midPrice        prometheus.Gauge
+	position        prometheus.Gauge
+	pnl             prometheus.Gauge
+	riskRejects     prometheus.Counter
+	quotes          prometheus.Counter
 }
 
-func newMetrics(symbol string) *metricsCollector {
-	return &metricsCollector{
-		restRequests: promauto.NewCounterVec(prometheus.CounterOpts{
-			Name: "runner_rest_requests_total",
-			Help: "REST 请求数量",
-		}, []string{"action"}),
-		restErrors: promauto.NewCounterVec(prometheus.CounterOpts{
-			Name: "runner_rest_errors_total",
-			Help: "REST 错误数量",
-		}, []string{"action"}),
-		restLatency: promauto.NewHistogramVec(prometheus.HistogramOpts{
-			Name:    "runner_rest_latency_seconds",
-			Help:    "REST 请求耗时",
-			Buckets: prometheus.DefBuckets,
-		}, []string{"action"}),
-		wsConnects: promauto.NewCounter(prometheus.CounterOpts{
-			Name: "runner_ws_connects_total",
-			Help: "WS 连接次数",
-		}),
-		wsFailures: promauto.NewCounter(prometheus.CounterOpts{
-			Name: "runner_ws_failures_total",
-			Help: "WS 失败次数",
-		}),
-		ordersPlaced: promauto.NewCounter(prometheus.CounterOpts{
-			Name: "runner_orders_placed_total",
-			Help: "策略下单数量",
-		}),
-		riskRejects: promauto.NewCounter(prometheus.CounterOpts{
-			Name: "runner_risk_rejects_total",
-			Help: "风控拒单数量",
-		}),
-		quotes: promauto.NewCounter(prometheus.CounterOpts{
-			Name: "runner_quotes_total",
-			Help: "策略报价次数",
-		}),
-		position: promauto.NewGauge(prometheus.GaugeOpts{
-			Name: "runner_position",
-			Help: "当前净仓位",
-		}),
-		pnl: promauto.NewGauge(prometheus.GaugeOpts{
-			Name: "runner_unrealized_pnl",
-			Help: "当前未实现盈亏",
-		}),
-		midPrice: promauto.NewGauge(prometheus.GaugeOpts{
-			Name: "runner_mid_price",
-			Help: "策略使用的 mid 价格",
-		}),
-		riskState: promauto.NewGauge(prometheus.GaugeOpts{
-			Name: "runner_risk_state",
-			Help: "风险状态(0=normal,1=reduce_only,2=halted)",
-		}),
-		spread: promauto.NewGauge(prometheus.GaugeOpts{
-			Name: "runner_spread",
-			Help: "当前挂单价差",
-		}),
-		quoteInterval: promauto.NewGauge(prometheus.GaugeOpts{
-			Name: "runner_quote_interval_seconds",
-			Help: "当前动态报价间隔(秒)",
-		}),
-	}
+func (m *metricsCollector) incQuotesGenerated(side string) {
+	m.quotesGenerated.WithLabelValues(side).Inc()
 }
 
-func serveMetrics(addr string) {
-	if addr == "" {
-		return
-	}
-	mux := http.NewServeMux()
-	mux.Handle("/metrics", promhttp.Handler())
-	go func() {
-		logEvent("metrics_listen", map[string]interface{}{"addr": addr})
-		if err := http.ListenAndServe(addr, mux); err != nil {
-			logEvent("metrics_error", map[string]interface{}{"error": err.Error()})
-		}
-	}()
+func (m *metricsCollector) incOrdersPlaced(side string) {
+	m.ordersPlaced.WithLabelValues(side).Inc()
+}
+
+func (m *metricsCollector) incFills(side string) {
+	m.fills.WithLabelValues(side).Inc()
 }

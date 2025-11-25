@@ -11,6 +11,7 @@ import (
 	"market-maker-go/market"
 	"market-maker-go/order"
 	"market-maker-go/strategy"
+	"market-maker-go/strategy/asmm"
 )
 
 // RiskState 描述 Runner 当前的风险状态。
@@ -59,6 +60,7 @@ type RiskGuard interface {
 type Runner struct {
 	Symbol   string
 	Engine   *strategy.Engine
+	ASMMStrategy *asmm.ASMMStrategy
 	Inv      *inventory.Tracker
 	OrderMgr *order.Manager
 	Risk     RiskGuard
@@ -111,7 +113,7 @@ type Runner struct {
 // OnTick 是 Runner 的主循环：它会根据 mid 计算新的报价、处理 Reduce-only/静态挂单、调用 Risk Guard，
 // 再将 buy/sell 两条腿提交给 order.Manager。任何错误都会反映为 risk_event/quote_error 供监控使用。
 func (r *Runner) OnTick(mid float64) error {
-	if r.Engine == nil || r.OrderMgr == nil || r.Inv == nil {
+	if (r.Engine == nil && r.ASMMStrategy == nil) || r.OrderMgr == nil || r.Inv == nil {
 		return errors.New("runner not initialized")
 	}
 	if mid <= 0 {
@@ -139,17 +141,37 @@ func (r *Runner) OnTick(mid float64) error {
 		}
 	}
 
-	snap := strategy.MarketSnapshot{Mid: mid, Ts: time.Now()}
-	quote := r.Engine.QuoteZeroInventory(snap, invWrapper{r.Inv})
+	// 根据策略类型生成报价
+	var bid, ask, size float64
+	if r.ASMMStrategy != nil {
+		// 使用ASMM策略生成报价
+		// 目前这是一个占位实现，将在后续阶段完善
+		spreadAbs := mid * r.BaseSpread
+		bid = mid - spreadAbs/2
+		ask = mid + spreadAbs/2
+		size = 0.01 // 默认大小，将在后续阶段完善
+	} else {
+		// 使用原有的网格策略
+		snap := strategy.MarketSnapshot{Mid: mid, Ts: time.Now()}
+		quote := r.Engine.QuoteZeroInventory(snap, invWrapper{r.Inv})
+		size = quote.Size
+		bid = quote.Bid
+		ask = quote.Ask
+	}
 
-	size := quote.Size
 	if size <= 0 {
 		return errors.New("invalid size")
 	}
 
 	spreadAbs, spreadRatio, volFactor, invFactor := r.computeSpread(mid)
 	if spreadAbs <= 0 {
-		spreadAbs = (quote.Ask - quote.Bid)
+		if r.ASMMStrategy != nil {
+			// ASMM策略计算
+			spreadAbs = ask - bid
+		} else {
+			// 网格策略计算
+			spreadAbs = (ask - bid)
+		}
 		if spreadAbs <= 0 {
 			spreadAbs = mid * r.BaseSpread
 		}
@@ -157,11 +179,15 @@ func (r *Runner) OnTick(mid float64) error {
 			spreadRatio = spreadAbs / mid
 		}
 	}
-	bid := mid - spreadAbs/2
-	ask := mid + spreadAbs/2
-	bid, ask = r.applyInventorySkew(bid, ask, spreadAbs)
-	bid, ask = r.applyTakeProfit(mid, bid, ask)
-	bid, ask = r.applyInsertStrategy(bid, ask)
+	
+	// 如果是ASMM策略，bid和ask已经计算好了，不需要重新计算
+	if r.ASMMStrategy == nil {
+		bid = mid - spreadAbs/2
+		ask = mid + spreadAbs/2
+		bid, ask = r.applyInventorySkew(bid, ask, spreadAbs)
+		bid, ask = r.applyTakeProfit(mid, bid, ask)
+		bid, ask = r.applyInsertStrategy(bid, ask)
+	}
 
 	qty := size
 	var err error

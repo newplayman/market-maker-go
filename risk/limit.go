@@ -1,85 +1,73 @@
 package risk
 
 import (
-	"errors"
 	"fmt"
-	"time"
+	"sync"
 )
 
-var (
-	ErrSingleExceed  = errors.New("single order exceed")
-	ErrDailyExceed   = errors.New("daily volume exceed")
-	ErrNetExceed     = errors.New("net exposure exceed")
-	ErrSpreadTooWide = errors.New("spread too wide")
-	ErrTooFrequent   = errors.New("too frequent order")
-	ErrPnLTooLow     = errors.New("pnl too low")
-	ErrPnLTooHigh    = errors.New("pnl too high")
-)
-
-// Limits 配置。
+// Limits holds risk exposure limits.
 type Limits struct {
-	SingleMax float64
-	DailyMax  float64
-	NetMax    float64
+	SingleMax float64 // 单笔最大下单量
+	DailyMax  float64 // 每日最大下单量
+	NetMax    float64 // 净持仓上限
 }
 
-// Inventory 提供净仓位。
-type Inventory interface {
-	NetExposure(symbol string) float64
+// PositionKeeper 跟踪仓位和成交量。
+type PositionKeeper interface {
+	NetExposure() float64
+	AddFilled(symbol string, qty float64)
+	GetDailyFilled(symbol string) float64
 }
 
-// LimitChecker 维护日累计成交量与净敞口校验。
+// LimitChecker implements risk guard using static limits.
 type LimitChecker struct {
-	cfg      *Limits
-	inv      Inventory
-	dayVol   map[string]float64
-	dayReset time.Time
-	clock    Clock
+	limits Limits
+	pos    PositionKeeper
+	mu     sync.Mutex
 }
 
-func NewLimitChecker(cfg *Limits, inv Inventory) *LimitChecker {
+// NewLimitChecker creates a limit checker with given limits.
+func NewLimitChecker(limits *Limits, pos PositionKeeper) *LimitChecker {
 	return &LimitChecker{
-		cfg:      cfg,
-		inv:      inv,
-		dayVol:   make(map[string]float64),
-		dayReset: NowUTC.Now(),
-		clock:    NowUTC,
+		limits: *limits,
+		pos:    pos,
 	}
 }
 
-// PreOrder 校验下单前约束；deltaQty 为本次下单数量（正买负卖），以基准计价。
-func (lc *LimitChecker) PreOrder(symbol string, deltaQty float64) error {
-	if lc.cfg == nil {
-		return errors.New("limits not configured")
-	}
-	now := lc.clock.Now()
-	if now.Sub(lc.dayReset) > 24*time.Hour {
-		lc.dayVol = make(map[string]float64)
-		lc.dayReset = now
+// PreOrder checks if an order complies with risk limits.
+func (l *LimitChecker) PreOrder(symbol string, deltaQty float64) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	// Single order limit
+	if l.limits.SingleMax > 0 && abs(deltaQty) > l.limits.SingleMax {
+		return fmt.Errorf("single order limit exceeded: %.4f > %.4f", abs(deltaQty), l.limits.SingleMax)
 	}
 
-	absQty := abs(deltaQty)
-	if lc.cfg.SingleMax > 0 && absQty > lc.cfg.SingleMax {
-		return fmt.Errorf("%w: %.2f > single %.2f", ErrSingleExceed, absQty, lc.cfg.SingleMax)
-	}
-	// 日累计
-	lc.dayVol[symbol] += absQty
-	if lc.cfg.DailyMax > 0 && lc.dayVol[symbol] > lc.cfg.DailyMax {
-		return fmt.Errorf("%w: %.2f > daily %.2f", ErrDailyExceed, lc.dayVol[symbol], lc.cfg.DailyMax)
-	}
-	// 净敞口
-	if lc.inv != nil && lc.cfg.NetMax > 0 {
-		net := lc.inv.NetExposure(symbol) + deltaQty
-		if abs(net) > lc.cfg.NetMax {
-			return fmt.Errorf("%w: %.2f > net %.2f", ErrNetExceed, net, lc.cfg.NetMax)
+	// Daily limit
+	if l.limits.DailyMax > 0 {
+		daily := l.pos.GetDailyFilled(symbol)
+		if daily+abs(deltaQty) > l.limits.DailyMax {
+			return fmt.Errorf("daily limit exceeded: %.4f + %.4f > %.4f", daily, abs(deltaQty), l.limits.DailyMax)
 		}
 	}
+
+	// Net exposure limit
+	if l.limits.NetMax > 0 {
+		net := l.pos.NetExposure()
+		newNet := net + deltaQty
+		if abs(newNet) > l.limits.NetMax {
+			return fmt.Errorf("net exposure limit exceeded: |%.4f + %.4f| = %.4f > %.4f", net, deltaQty, abs(newNet), l.limits.NetMax)
+		}
+	}
+
 	return nil
 }
 
-func abs(v float64) float64 {
-	if v < 0 {
-		return -v
+func abs(x float64) float64 {
+	if x < 0 {
+		return -x
 	}
-	return v
+	return x
 }
+

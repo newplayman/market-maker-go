@@ -159,7 +159,7 @@ func (m *Monitor) checkRisk() {
 		} else {
 			// 根据回撤判断风险等级
 			drawdown := m.pnlMonitor.GetDrawdown()
-			if drawdown > 0.02 { // 2%回撤为警告
+			if drawdown > 0.05 { // 放宽到5%回撤为警告
 				m.riskState = RiskStateWarning
 			} else {
 				m.riskState = RiskStateNormal

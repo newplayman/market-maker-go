@@ -15,10 +15,13 @@ type Quote struct {
 
 // EngineConfig 控制最小价差、目标仓位等核心参数。
 type EngineConfig struct {
-	MinSpread      float64 // 最小价差（如 0.0005 表示 5bps）
-	TargetPosition float64 // 目标仓位（正=多，负=空）
-	MaxDrift       float64 // 可接受的仓位偏移
-	BaseSize       float64 // 报价基础数量
+	MinSpread        float64 // 最小价差（如 0.0005 表示 5bps）
+	TargetPosition   float64 // 目标仓位（正=多，负=空）
+	MaxDrift         float64 // 可接受的仓位偏移
+	BaseSize         float64 // 报价基础数量
+	EnableMultiLayer bool    // 是否启用多层持仓
+	LayerCount       int     // 层数（2-3）
+	LayerSpacing     float64 // 层间距（百分比）
 }
 
 // MarketSnapshot 提供 mid 价与时间，实际应含更多行情字段。
@@ -92,3 +95,25 @@ func (e *Engine) BacktestUpdate(snaps []MarketSnapshot, invs []float64) []Quote 
 type staticInv struct{ net float64 }
 
 func (s staticInv) NetExposure() float64 { return s.net }
+
+// StrategyType represents the type of strategy to use.
+type StrategyType string
+
+const (
+	GridStrategy StrategyType = "grid"
+	ASMMStrategy StrategyType = "asmm"
+)
+
+// CreateStrategy creates a strategy based on the given type and configuration.
+func CreateStrategy(strategyType StrategyType, config interface{}) (interface{}, error) {
+	switch strategyType {
+	case GridStrategy:
+		// Handle grid strategy creation
+		if cfg, ok := config.(EngineConfig); ok {
+			return NewEngine(cfg)
+		}
+		return nil, errors.New("invalid grid strategy config")
+	default:
+		return nil, errors.New("unknown strategy type")
+	}
+}

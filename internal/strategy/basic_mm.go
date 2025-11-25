@@ -49,6 +49,10 @@ type Config struct {
 	SkewFactor   float64 // 库存倾斜因子（0-1之间）
 	MinSpread    float64 // 最小价差
 	MaxSpread    float64 // 最大价差
+	// 新增：多层持仓参数
+	EnableMultiLayer bool    // 是否启用多层持仓
+	LayerCount       int     // 层数（2-3）
+	LayerSpacing     float64 // 层间距（以百分比表示，如0.15%）
 }
 
 // NewBasicMarketMaking 创建基础做市策略
@@ -78,7 +82,7 @@ func NewBasicMarketMaking(config Config) *BasicMarketMaking {
 	}
 }
 
-// GenerateQuotes 生成买卖报价
+// GenerateQuotes 生成买卖报价 - 支持多层持仓
 func (s *BasicMarketMaking) GenerateQuotes(ctx Context) ([]Quote, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -98,6 +102,91 @@ func (s *BasicMarketMaking) GenerateQuotes(ctx Context) ([]Quote, error) {
 	// 2. 计算库存倾斜
 	// inventoryRatio: -1 (满仓空头) 到 +1 (满仓多头)
 	inventoryRatio := 0.0
+
+	// 3. 检查是否启用多层持仓
+	if s.config.EnableMultiLayer && s.config.LayerCount > 1 {
+		return s.generateMultiLayerQuotes(ctx, baseSpreadPrice, halfSpread, inventoryRatio)
+	}
+
+	// 否则使用单层报价
+	return s.generateSingleLayerQuotes(ctx, baseSpreadPrice, halfSpread, inventoryRatio)
+}
+
+// generateMultiLayerQuotes 生成多层网格报价
+func (s *BasicMarketMaking) generateMultiLayerQuotes(
+	ctx Context,
+	baseSpreadPrice float64,
+	halfSpread float64,
+	inventoryRatio float64) ([]Quote, error) {
+
+	var quotes []Quote
+	layerCount := s.config.LayerCount
+	if layerCount < 2 {
+		layerCount = 2
+	}
+	if layerCount > 3 {
+		layerCount = 3
+	}
+
+	// 计算每层的订单大小
+	sizePerLayer := s.config.BaseSize / float64(layerCount)
+
+	// 层间距（价格单位）
+	layerSpacingPrice := s.config.LayerSpacing * ctx.Mid
+	if layerSpacingPrice <= 0 {
+		layerSpacingPrice = 0.001 * ctx.Mid // 默认0.1%
+	}
+
+	// 库存倾斜调整
+	skewAdjust := inventoryRatio * halfSpread * s.config.SkewFactor
+
+	// 生成多个BUY层
+	for layer := 0; layer < layerCount; layer++ {
+		buyPrice := ctx.Mid - halfSpread - float64(layer)*layerSpacingPrice - skewAdjust
+		if buyPrice > 0 {
+			quotes = append(quotes, Quote{
+				Side:  "BUY",
+				Price: buyPrice,
+				Size:  sizePerLayer,
+			})
+		}
+	}
+
+	// 生成多个SELL层
+	for layer := 0; layer < layerCount; layer++ {
+		sellPrice := ctx.Mid + halfSpread + float64(layer)*layerSpacingPrice - skewAdjust
+		if sellPrice > 0 {
+			quotes = append(quotes, Quote{
+				Side:  "SELL",
+				Price: sellPrice,
+				Size:  sizePerLayer,
+			})
+		}
+	}
+
+	// 应用spread限制
+	for i := range quotes {
+		switch quotes[i].Side {
+		case "BUY":
+			if quotes[i].Price > ctx.Mid {
+				quotes[i].Price = ctx.Mid - s.config.MinSpread*ctx.Mid/2
+			}
+		case "SELL":
+			if quotes[i].Price < ctx.Mid {
+				quotes[i].Price = ctx.Mid + s.config.MinSpread*ctx.Mid/2
+			}
+		}
+	}
+
+	return quotes, nil
+}
+
+// generateSingleLayerQuotes 生成单层报价
+func (s *BasicMarketMaking) generateSingleLayerQuotes(
+	ctx Context,
+	baseSpreadPrice float64,
+	halfSpread float64,
+	inventoryRatio float64) ([]Quote, error) {
 	if ctx.MaxInventory > 0 {
 		inventoryRatio = ctx.Inventory / ctx.MaxInventory
 		// 限制在 [-1, 1] 范围内

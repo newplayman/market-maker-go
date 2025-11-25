@@ -1,266 +1,419 @@
 {
   "dashboard": {
     "title": "交易总览 - Market Maker",
-    "tags": ["trading", "market-maker"],
+    "tags": [
+      "trading",
+      "market-maker"
+    ],
     "timezone": "browser",
     "refresh": "5s",
-    "schemaVersion": 16,
-    "version": 1,
+    "schemaVersion": 36,
+    "version": 2,
     "panels": [
       {
         "id": 1,
-        "title": "实时PnL",
+        "title": "实时净值",
         "type": "stat",
-        "gridPos": {"x": 0, "y": 0, "w": 6, "h": 4},
+        "gridPos": {
+          "x": 0,
+          "y": 0,
+          "w": 6,
+          "h": 4
+        },
         "targets": [
           {
-            "expr": "trading_pnl_total",
-            "legendFormat": "总PnL",
+            "expr": "runner_equity",
+            "legendFormat": "Equity",
             "refId": "A"
           }
         ],
         "fieldConfig": {
           "defaults": {
             "unit": "currencyUSD",
-            "decimals": 2,
+            "decimals": 3,
             "thresholds": {
               "mode": "absolute",
               "steps": [
-                {"value": null, "color": "red"},
-                {"value": 0, "color": "green"}
+                {
+                  "value": null,
+                  "color": "red"
+                },
+                {
+                  "value": 0,
+                  "color": "green"
+                }
               ]
             }
           }
         },
         "options": {
-          "graphMode": "area",
           "colorMode": "value",
+          "graphMode": "area",
+          "justifyMode": "auto",
+          "reduceOptions": {
+            "calcs": [
+              "lastNotNull"
+            ],
+            "values": false
+          },
           "orientation": "auto"
         }
       },
       {
         "id": 2,
-        "title": "持仓情况",
-        "type": "gauge",
-        "gridPos": {"x": 6, "y": 0, "w": 6, "h": 4},
+        "title": "钱包余额",
+        "type": "stat",
+        "gridPos": {
+          "x": 6,
+          "y": 0,
+          "w": 6,
+          "h": 4
+        },
         "targets": [
           {
-            "expr": "inventory_position_current",
-            "legendFormat": "当前持仓",
+            "expr": "runner_wallet_balance",
+            "legendFormat": "Wallet",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "currencyUSD",
+            "decimals": 3
+          }
+        },
+        "options": {
+          "colorMode": "value",
+          "graphMode": "area",
+          "reduceOptions": {
+            "calcs": [
+              "lastNotNull"
+            ],
+            "values": false
+          }
+        }
+      },
+      {
+        "id": 3,
+        "title": "净仓位",
+        "type": "gauge",
+        "gridPos": {
+          "x": 12,
+          "y": 0,
+          "w": 6,
+          "h": 4
+        },
+        "targets": [
+          {
+            "expr": "runner_position",
+            "legendFormat": "Position",
             "refId": "A"
           }
         ],
         "fieldConfig": {
           "defaults": {
             "unit": "short",
-            "max": 0.1,
-            "min": -0.1,
-            "thresholds": {
-              "mode": "absolute",
-              "steps": [
-                {"value": -0.1, "color": "red"},
-                {"value": -0.05, "color": "yellow"},
-                {"value": 0.05, "color": "green"},
-                {"value": 0.05, "color": "yellow"},
-                {"value": 0.1, "color": "red"}
-              ]
-            }
+            "max": 0.05,
+            "min": -0.05,
+            "decimals": 4
           }
         }
       },
       {
-        "id": 3,
-        "title": "订单统计（今日）",
+        "id": 4,
+        "title": "风险状态",
         "type": "stat",
-        "gridPos": {"x": 12, "y": 0, "w": 12, "h": 4},
+        "gridPos": {
+          "x": 18,
+          "y": 0,
+          "w": 6,
+          "h": 4
+        },
         "targets": [
           {
-            "expr": "increase(order_placed_total[24h])",
-            "legendFormat": "总订单",
+            "expr": "runner_risk_state",
+            "legendFormat": "risk_state",
+            "refId": "A",
+            "instant": true
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "mappings": [
+              {
+                "type": "value",
+                "options": {
+                  "0": {
+                    "text": "Normal"
+                  },
+                  "1": {
+                    "text": "Reduce Only"
+                  },
+                  "2": {
+                    "text": "Halted"
+                  }
+                }
+              }
+            ],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "value": null,
+                  "color": "green"
+                },
+                {
+                  "value": 1,
+                  "color": "orange"
+                },
+                {
+                  "value": 2,
+                  "color": "red"
+                }
+              ]
+            }
+          }
+        },
+        "options": {
+          "colorMode": "background",
+          "reduceOptions": {
+            "calcs": [
+              "lastNotNull"
+            ],
+            "values": false
+          }
+        }
+      },
+      {
+        "id": 5,
+        "title": "净值 / 钱包曲线",
+        "type": "timeseries",
+        "gridPos": {
+          "x": 0,
+          "y": 4,
+          "w": 12,
+          "h": 8
+        },
+        "targets": [
+          {
+            "expr": "runner_equity",
+            "legendFormat": "Equity",
             "refId": "A"
           },
           {
-            "expr": "increase(order_filled_total[24h])",
-            "legendFormat": "成交订单",
+            "expr": "runner_wallet_balance",
+            "legendFormat": "Wallet",
             "refId": "B"
           },
           {
-            "expr": "increase(order_cancelled_total[24h])",
-            "legendFormat": "撤单",
+            "expr": "runner_unrealized_pnl",
+            "legendFormat": "UnrealizedPnL",
             "refId": "C"
           },
           {
-            "expr": "increase(order_filled_total[24h]) / increase(order_placed_total[24h]) * 100",
-            "legendFormat": "成交率%",
+            "expr": "runner_realized_pnl",
+            "legendFormat": "RealizedPnL",
             "refId": "D"
           }
         ],
         "fieldConfig": {
           "defaults": {
-            "unit": "short"
+            "unit": "currencyUSD",
+            "decimals": 3
+          }
+        }
+      },
+      {
+        "id": 6,
+        "title": "价格 / Spread",
+        "type": "timeseries",
+        "gridPos": {
+          "x": 12,
+          "y": 4,
+          "w": 12,
+          "h": 8
+        },
+        "targets": [
+          {
+            "expr": "runner_mid_price",
+            "legendFormat": "Mid",
+            "refId": "A"
+          },
+          {
+            "expr": "runner_spread * 10000",
+            "legendFormat": "Spread (bps)",
+            "refId": "B"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "decimals": 4
           },
           "overrides": [
             {
-              "matcher": {"id": "byName", "options": "成交率%"},
+              "matcher": {
+                "id": "byName",
+                "options": "Spread (bps)"
+              },
               "properties": [
-                {"id": "unit", "value": "percent"}
+                {
+                  "id": "unit",
+                  "value": "short"
+                }
+              ]
+            }
+          ]
+        },
+        "yAxes": [
+          {
+            "format": "short",
+            "label": "Price"
+          },
+          {
+            "format": "short",
+            "label": "bps"
+          }
+        ]
+      },
+      {
+        "id": 7,
+        "title": "订单与风险事件",
+        "type": "timeseries",
+        "gridPos": {
+          "x": 0,
+          "y": 12,
+          "w": 12,
+          "h": 6
+        },
+        "targets": [
+          {
+            "expr": "rate(runner_orders_placed_total[1m])",
+            "legendFormat": "Orders/min",
+            "refId": "A"
+          },
+          {
+            "expr": "rate(runner_risk_rejects_total[1m])",
+            "legendFormat": "Risk Rejects/min",
+            "refId": "B"
+          },
+          {
+            "expr": "rate(runner_ws_failures_total[5m])",
+            "legendFormat": "WS Failures/5m",
+            "refId": "C"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short"
+          }
+        }
+      },
+      {
+        "id": 8,
+        "title": "仓位与 DrainMode",
+        "type": "timeseries",
+        "gridPos": {
+          "x": 12,
+          "y": 12,
+          "w": 12,
+          "h": 6
+        },
+        "targets": [
+          {
+            "expr": "runner_position",
+            "legendFormat": "Net Exposure",
+            "refId": "A"
+          },
+          {
+            "expr": "runner_risk_state",
+            "legendFormat": "Risk State",
+            "refId": "B"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "decimals": 4
+          },
+          "overrides": [
+            {
+              "matcher": {
+                "id": "byName",
+                "options": "Risk State"
+              },
+              "properties": [
+                {
+                  "id": "unit",
+                  "value": "short"
+                },
+                {
+                  "id": "custom.transform",
+                  "value": "step"
+                }
               ]
             }
           ]
         }
       },
       {
-        "id": 4,
-        "title": "PnL趋势图",
-        "type": "graph",
-        "gridPos": {"x": 0, "y": 4, "w": 12, "h": 8},
+        "id": 9,
+        "title": "累计手续费",
+        "type": "timeseries",
+        "gridPos": {
+          "x": 0,
+          "y": 18,
+          "w": 12,
+          "h": 6
+        },
         "targets": [
           {
-            "expr": "trading_pnl_total",
-            "legendFormat": "累计PnL",
+            "expr": "runner_fees_total",
+            "legendFormat": "Fees",
             "refId": "A"
-          },
-          {
-            "expr": "trading_pnl_realized",
-            "legendFormat": "实现PnL",
-            "refId": "B"
-          },
-          {
-            "expr": "trading_pnl_unrealized",
-            "legendFormat": "未实现PnL",
-            "refId": "C"
-          }
-        ],
-        "yaxes": [
-          {
-            "format": "currencyUSD",
-            "label": "PnL (USD)"
-          },
-          {
-            "format": "short"
-          }
-        ],
-        "lines": true,
-        "fill": 1,
-        "linewidth": 2
-      },
-      {
-        "id": 5,
-        "title": "订单成交分布",
-        "type": "bargauge",
-        "gridPos": {"x": 12, "y": 4, "w": 6, "h": 8},
-        "targets": [
-          {
-            "expr": "increase(order_filled_total{side=\"buy\"}[1h])",
-            "legendFormat": "买单成交",
-            "refId": "A"
-          },
-          {
-            "expr": "increase(order_filled_total{side=\"sell\"}[1h])",
-            "legendFormat": "卖单成交",
-            "refId": "B"
           }
         ],
         "fieldConfig": {
           "defaults": {
-            "unit": "short"
+            "unit": "currencyUSD",
+            "decimals": 4
           }
-        },
-        "options": {
-          "orientation": "horizontal",
-          "displayMode": "gradient"
         }
       },
       {
-        "id": 6,
-        "title": "当前报价",
-        "type": "table",
-        "gridPos": {"x": 18, "y": 4, "w": 6, "h": 8},
+        "id": 10,
+        "title": "净值 vs 手续费",
+        "type": "timeseries",
+        "gridPos": {
+          "x": 12,
+          "y": 18,
+          "w": 12,
+          "h": 6
+        },
         "targets": [
           {
-            "expr": "strategy_quote_price{side=\"bid\"}",
-            "legendFormat": "",
-            "refId": "A",
-            "instant": true
-          },
-          {
-            "expr": "strategy_quote_price{side=\"ask\"}",
-            "legendFormat": "",
-            "refId": "B",
-            "instant": true
-          },
-          {
-            "expr": "strategy_quote_size{side=\"bid\"}",
-            "legendFormat": "",
-            "refId": "C",
-            "instant": true
-          },
-          {
-            "expr": "strategy_quote_size{side=\"ask\"}",
-            "legendFormat": "",
-            "refId": "D",
-            "instant": true
-          }
-        ],
-        "transformations": [
-          {
-            "id": "organize",
-            "options": {
-              "excludeByName": {},
-              "indexByName": {},
-              "renameByName": {
-                "Value #A": "买价",
-                "Value #B": "卖价",
-                "Value #C": "买量",
-                "Value #D": "卖量"
-              }
-            }
-          }
-        ]
-      },
-      {
-        "id": 7,
-        "title": "Spread 分布",
-        "type": "graph",
-        "gridPos": {"x": 0, "y": 12, "w": 12, "h": 6},
-        "targets": [
-          {
-            "expr": "strategy_spread_bps",
-            "legendFormat": "Spread (bps)",
+            "expr": "runner_equity",
+            "legendFormat": "Equity",
             "refId": "A"
           },
           {
-            "expr": "market_bid_ask_spread_bps",
-            "legendFormat": "市场Spread (bps)",
+            "expr": "runner_wallet_balance",
+            "legendFormat": "Wallet",
             "refId": "B"
+          },
+          {
+            "expr": "runner_fees_total",
+            "legendFormat": "Fees",
+            "refId": "C"
           }
         ],
-        "yaxes": [
-          {
-            "format": "short",
-            "label": "Basis Points"
+        "fieldConfig": {
+          "defaults": {
+            "unit": "currencyUSD",
+            "decimals": 3
           }
-        ]
-      },
-      {
-        "id": 8,
-        "title": "成交量统计",
-        "type": "graph",
-        "gridPos": {"x": 12, "y": 12, "w": 12, "h": 6},
-        "targets": [
-          {
-            "expr": "rate(order_filled_volume_total[5m])",
-            "legendFormat": "成交量/分钟",
-            "refId": "A"
-          }
-        ],
-        "bars": true,
-        "yaxes": [
-          {
-            "format": "short",
-            "label": "Volume"
-          }
-        ]
+        }
       }
     ]
   }

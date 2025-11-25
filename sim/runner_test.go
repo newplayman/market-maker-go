@@ -30,6 +30,23 @@ func (s stubRisk) PreOrder(symbol string, deltaQty float64) error {
 	return nil
 }
 
+type flakyPostOnlyGateway struct {
+	failUntil int
+	calls     int
+	orders    []order.Order
+}
+
+func (f *flakyPostOnlyGateway) Place(o order.Order) (string, error) {
+	f.calls++
+	f.orders = append(f.orders, o)
+	if f.calls <= f.failUntil {
+		return "", fmt.Errorf("code\":-5022 post only reject")
+	}
+	return fmt.Sprintf("ok-%d", f.calls), nil
+}
+
+func (f *flakyPostOnlyGateway) Cancel(orderID string) error { return nil }
+
 func TestRunnerOnTickPlacesOrders(t *testing.T) {
 	engine, _ := strategy.NewEngine(strategy.EngineConfig{
 		MinSpread:      0.001,
@@ -201,6 +218,97 @@ func TestRunnerReduceOnlyState(t *testing.T) {
 	}
 }
 
+func TestSubmitOrderWithFallbackKeepsMakerAfterRetries(t *testing.T) {
+	gw := &flakyPostOnlyGateway{failUntil: 2}
+	mgr := order.NewManager(gw)
+	r := Runner{
+		OrderMgr:    mgr,
+		Constraints: order.SymbolConstraints{TickSize: 0.1},
+	}
+	ord := order.Order{
+		Symbol:   "ETHUSDC",
+		Side:     "BUY",
+		Price:    100,
+		Quantity: 0.01,
+		PostOnly: true,
+	}
+	res, usedPostOnly, err := r.submitOrderWithFallback("BUY", ord, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !usedPostOnly {
+		t.Fatalf("expected maker order, got taker")
+	}
+	if res == nil {
+		t.Fatalf("nil response order")
+	}
+	expectedPrice := ord.Price - float64(gw.failUntil)*r.Constraints.TickSize
+	if math.Abs(res.Price-expectedPrice) > 1e-9 {
+		t.Fatalf("expected price %.2f, got %.2f", expectedPrice, res.Price)
+	}
+	if len(gw.orders) != gw.failUntil+1 {
+		t.Fatalf("expected %d attempts, got %d", gw.failUntil+1, len(gw.orders))
+	}
+}
+
+func TestSubmitOrderWithFallbackEventuallyConvertsToTaker(t *testing.T) {
+	gw := &flakyPostOnlyGateway{failUntil: 4}
+	mgr := order.NewManager(gw)
+	r := Runner{
+		OrderMgr:    mgr,
+		Constraints: order.SymbolConstraints{TickSize: 0.1},
+	}
+	ord := order.Order{
+		Symbol:   "ETHUSDC",
+		Side:     "BUY",
+		Price:    100,
+		Quantity: 0.01,
+		PostOnly: true,
+	}
+	res, usedPostOnly, err := r.submitOrderWithFallback("BUY", ord, true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if usedPostOnly {
+		t.Fatalf("expected taker fallback")
+	}
+	if res == nil || res.PostOnly {
+		t.Fatalf("expected fallback order to be non-post-only")
+	}
+	if len(gw.orders) != gw.failUntil+1 {
+		t.Fatalf("expected %d attempts, got %d", gw.failUntil+1, len(gw.orders))
+	}
+}
+
+func TestSubmitOrderWithFallbackStopsWithoutTakerOutsideReduceOnly(t *testing.T) {
+	gw := &flakyPostOnlyGateway{failUntil: 5}
+	mgr := order.NewManager(gw)
+	r := Runner{
+		OrderMgr:    mgr,
+		Constraints: order.SymbolConstraints{TickSize: 0.1},
+	}
+	ord := order.Order{
+		Symbol:   "ETHUSDC",
+		Side:     "BUY",
+		Price:    100,
+		Quantity: 0.01,
+		PostOnly: true,
+	}
+	res, usedPostOnly, err := r.submitOrderWithFallback("BUY", ord, false)
+	if err == nil {
+		t.Fatalf("expected error when taker fallback disabled")
+	}
+	if res != nil {
+		t.Fatalf("expected nil result when submission fails")
+	}
+	if !usedPostOnly {
+		t.Fatalf("should remain post-only when fallback disabled")
+	}
+	if len(gw.orders) != 4 {
+		t.Fatalf("expected 4 attempts (max retries), got %d", len(gw.orders))
+	}
+}
+
 func TestRunnerStopLossTriggersHalt(t *testing.T) {
 	engine, _ := strategy.NewEngine(strategy.EngineConfig{
 		MinSpread:      0.001,
@@ -338,11 +446,11 @@ func TestPlanReduceOnlyUsesBestOpposite(t *testing.T) {
 		ReduceOnlyMaxSlippage: 0.01,
 	}
 	r.Book.ApplyDelta(map[float64]float64{99: 5, 98.5: 3}, map[float64]float64{101: 4, 101.5: 6})
-	plan := r.planReduceOnlyPrice(true, 100, 98, 1)
+	plan := r.planReduceOnlyPrice(true, 100, 98, 1, false)
 	if plan.price < 101 {
 		t.Fatalf("expected plan price >= best ask, got %.2f", plan.price)
 	}
-	planSell := r.planReduceOnlyPrice(false, 100, 102, 1)
+	planSell := r.planReduceOnlyPrice(false, 100, 102, 1, false)
 	if planSell.price > 99 {
 		t.Fatalf("expected plan price <= best bid, got %.2f", planSell.price)
 	}

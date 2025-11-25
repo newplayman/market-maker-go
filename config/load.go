@@ -45,17 +45,41 @@ type SymbolConfig struct {
 }
 
 type StrategyParams struct {
-	MinSpread        float64 `yaml:"minSpread"`        // 最小绝对价差（若配合 mid 使用则视为基准 spread）
-	BaseSize         float64 `yaml:"baseSize"`         // 标准下单数量，静态/动态腿均基于该数拆分
-	TargetPosition   float64 `yaml:"targetPosition"`   // 策略期望的目标仓位
-	MaxDrift         float64 `yaml:"maxDrift"`         // 允许偏离目标仓位的最大比例
-	QuoteIntervalMs  int     `yaml:"quoteIntervalMs"`  // 报价基础周期（毫秒）
-	TakeProfitPct    float64 `yaml:"takeProfitPct"`    // 浮盈达到该比例时触发锁盈/减仓
-	StaticFraction   float64 `yaml:"staticFraction"`   // 静态挂单占 baseSize 的比例
-	StaticTicks      int     `yaml:"staticTicks"`      // 静态挂单可容忍的偏差（tick 数）
-	StaticRestMs     int     `yaml:"staticRestMs"`     // 静态挂单最小休眠时间（毫秒）
-	DynamicRestMs    int     `yaml:"dynamicRestMs"`    // 动态挂单最小休眠时间（毫秒）
-	DynamicRestTicks int     `yaml:"dynamicRestTicks"` // 动态挂单需要替换时的最小价差（tick）
+	Type                       string  `yaml:"type"`                     // 策略类型 ("grid" or "asmm")
+	MinSpread                  float64 `yaml:"minSpread"`                // 最小绝对价差（若配合 mid 使用则视为基准 spread）
+	FeeBuffer                  float64 `yaml:"feeBuffer"`                // 附加价差，用于覆盖手续费
+	BaseSize                   float64 `yaml:"baseSize"`                 // 标准下单数量，静态/动态腿均基于该数拆分
+	TargetPosition             float64 `yaml:"targetPosition"`           // 策略期望的目标仓位
+	MaxDrift                   float64 `yaml:"maxDrift"`                 // 允许偏离目标仓位的最大比例
+	QuoteIntervalMs            int     `yaml:"quoteIntervalMs"`          // 报价基础周期（毫秒）
+	TakeProfitPct              float64 `yaml:"takeProfitPct"`            // 浮盈达到该比例时触发锁盈/减仓
+	StaticFraction             float64 `yaml:"staticFraction"`           // 静态挂单占 baseSize 的比例
+	StaticTicks                int     `yaml:"staticTicks"`              // 静态挂单可容忍的偏差（tick 数）
+	StaticRestMs               int     `yaml:"staticRestMs"`             // 静态挂单最小休眠时间（毫秒）
+	DynamicRestMs              int     `yaml:"dynamicRestMs"`            // 动态挂单最小休眠时间（毫秒）
+	DynamicRestTicks           int     `yaml:"dynamicRestTicks"`         // 动态挂单需要替换时的最小价差（tick）
+	InventoryPressureThreshold float64 `yaml:"inventoryPressureThreshold"`
+	InventoryPressureStrength  float64 `yaml:"inventoryPressureStrength"`
+	InventoryPressureExponent  float64 `yaml:"inventoryPressureExponent"`
+	MomentumThreshold          float64 `yaml:"momentumThreshold"`
+	MomentumAlpha              float64 `yaml:"momentumAlpha"`
+	EnableMultiLayer           bool    `yaml:"enableMultiLayer"`         // 是否启用多层持仓
+	LayerCount                 int     `yaml:"layerCount"`               // 层数（2-3）
+	LayerSpacing               float64 `yaml:"layerSpacing"`             // 层间距（百分比）
+	
+	// ASMM策略专用参数
+	MinSpreadBps               float64 `yaml:"minSpreadBps"`             // 最小价差（基点）
+	MaxSpreadBps               float64 `yaml:"maxSpreadBps"`             // 最大价差（基点）
+	MinSpacingBps              float64 `yaml:"minSpacingBps"`            // 最小档位间距（基点）
+	MaxLevels                  int     `yaml:"maxLevels"`                // 最大档位数
+	SizeVolK                   float64 `yaml:"sizeVolK"`                 // 价格波动系数
+	InvSoftLimit               float64 `yaml:"invSoftLimit"`             // 软性仓位限制
+	InvHardLimit               float64 `yaml:"invHardLimit"`             // 硬性仓位限制
+	InvSkewK                   float64 `yaml:"invSkewK"`                 // 仓位偏移系数
+	VolK                       float64 `yaml:"volK"`                     // 波动率系数
+	TrendSpreadMultiplier      float64 `yaml:"trendSpreadMultiplier"`    // 趋势市场价差乘数
+	HighVolSpreadMultiplier    float64 `yaml:"highVolSpreadMultiplier"`  // 高波动市场价差乘数
+	AvoidToxic                 bool    `yaml:"avoidToxic"`               // 是否避免有毒订单流
 }
 
 type SymbolRisk struct {
@@ -154,6 +178,12 @@ func Validate(cfg AppConfig) error {
 		}
 		if sc.Strategy.DynamicRestTicks < 0 {
 			return fmt.Errorf("symbol %s strategy.dynamicRestTicks must be >= 0", sym)
+		}
+		if sc.Strategy.InventoryPressureThreshold < 0 || sc.Strategy.InventoryPressureStrength < 0 || sc.Strategy.InventoryPressureExponent < 0 {
+			return fmt.Errorf("symbol %s strategy.inventoryPressure* must be >= 0", sym)
+		}
+		if sc.Strategy.MomentumThreshold < 0 || sc.Strategy.MomentumAlpha < 0 {
+			return fmt.Errorf("symbol %s strategy.momentum* must be >= 0", sym)
 		}
 		if sc.Risk.SingleMax < 0 || sc.Risk.DailyMax < 0 || sc.Risk.NetMax < 0 {
 			return fmt.Errorf("symbol %s risk limits must be >= 0", sym)
