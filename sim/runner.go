@@ -9,7 +9,10 @@ import (
 
 	"market-maker-go/inventory"
 	"market-maker-go/market"
+	"market-maker-go/metrics"
 	"market-maker-go/order"
+	"market-maker-go/posttrade"
+	"market-maker-go/risk"
 	"market-maker-go/strategy"
 	"market-maker-go/strategy/asmm"
 )
@@ -58,13 +61,13 @@ type RiskGuard interface {
 // Runner 将行情->策略->下单串起来，负责把 OrderBook/Inventory 状态与策略引擎的报价结果对齐，
 // 并在内部管理静态/动态挂单、Reduce-only、止损等逻辑。cmd/runner 会使用真实 gateway 将其接入交易所。
 type Runner struct {
-	Symbol   string
-	Engine   *strategy.Engine
+	Symbol       string
+	Engine       *strategy.Engine
 	ASMMStrategy *asmm.ASMMStrategy
-	Inv      *inventory.Tracker
-	OrderMgr *order.Manager
-	Risk     RiskGuard
-	Book     *market.OrderBook // 可选，供 VWAPGuard 使用
+	Inv          *inventory.Tracker
+	OrderMgr     *order.Manager
+	Risk         RiskGuard
+	Book         *market.OrderBook // 可选，供 VWAPGuard 使用
 	// Constraints 用于在下单前对齐 tickSize/stepSize，并满足 minQty/minNotional。
 	Constraints             order.SymbolConstraints
 	BaseSpread              float64
@@ -108,10 +111,30 @@ type Runner struct {
 	riskState               RiskState
 	onRiskStateChange       func(RiskState, string)
 	onStrategyAdjust        func(StrategyAdjustInfo)
+	// 多档动态挂单状态
+	dynamicBids []levelState
+	dynamicAsks []levelState
+	// 自适应风控相关
+	postTradeAnalyzer  *posttrade.Analyzer
+	adaptiveRisk       *risk.AdaptiveRiskManager
+	lastAdaptiveUpdate time.Time
+	// 成交跟踪与撤单抑制
+	fillTracker              *order.FillTracker
+	cancelSuppressionEnabled bool
+	fillRateThreshold        float64 // 成交率阈值（每分钟）
+	recentFillsThreshold     int     // 近期成交次数阈值
 }
 
 // OnTick 是 Runner 的主循环：它会根据 mid 计算新的报价、处理 Reduce-only/静态挂单、调用 Risk Guard，
 // 再将 buy/sell 两条腿提交给 order.Manager。任何错误都会反映为 risk_event/quote_error 供监控使用。
+
+// levelState 维护单档挂单的状态
+type levelState struct {
+	id       string
+	price    float64
+	placedAt time.Time
+}
+
 func (r *Runner) OnTick(mid float64) error {
 	if (r.Engine == nil && r.ASMMStrategy == nil) || r.OrderMgr == nil || r.Inv == nil {
 		return errors.New("runner not initialized")
@@ -134,6 +157,33 @@ func (r *Runner) OnTick(mid float64) error {
 	}
 	r.prevMid = mid
 
+	// 行情陈旧度守卫：若 OrderBook 更新过期则跳过本次报价
+	if r.Book != nil {
+		maxStale := r.BaseInterval
+		if maxStale <= 0 {
+			maxStale = 2 * time.Second
+		}
+		if time.Since(r.Book.LastUpdate()) > 3*maxStale {
+			return fmt.Errorf("stale_orderbook staleness=%s", time.Since(r.Book.LastUpdate()))
+		}
+	}
+
+	// 周期性更新自适应风控参数
+	if r.adaptiveRisk != nil {
+		adaptiveInterval := 5 * time.Minute
+		if time.Since(r.lastAdaptiveUpdate) > adaptiveInterval {
+			r.adaptiveRisk.Update()
+			r.lastAdaptiveUpdate = now
+		}
+	}
+
+	// 更新 FillTracker 指标
+	if r.fillTracker != nil {
+		stats := r.fillTracker.GetStats()
+		suppressionActive := r.shouldSuppressCancel()
+		metrics.UpdateFillTrackerMetrics(stats.RecentFillRate, stats.RecentFills, suppressionActive)
+	}
+
 	if r.StopLoss != 0 {
 		_, pnl := r.Inv.Valuation(mid)
 		if (r.StopLoss < 0 && pnl <= r.StopLoss) || (r.StopLoss > 0 && pnl >= r.StopLoss) {
@@ -143,13 +193,65 @@ func (r *Runner) OnTick(mid float64) error {
 
 	// 根据策略类型生成报价
 	var bid, ask, size float64
+	var quotes []asmm.Quote
+	var asmmBidReduceOnly, asmmAskReduceOnly bool
 	if r.ASMMStrategy != nil {
-		// 使用ASMM策略生成报价
-		// 目前这是一个占位实现，将在后续阶段完善
-		spreadAbs := mid * r.BaseSpread
-		bid = mid - spreadAbs/2
-		ask = mid + spreadAbs/2
-		size = 0.01 // 默认大小，将在后续阶段完善
+		// 基于ASMM策略生成报价
+		var bestBid, bestAsk float64
+		var imbalance float64
+		if r.Book != nil {
+			bestBid, bestAsk = r.Book.Best()
+			imbalance = market.CalculateImbalanceFromOrderBook(r.Book, 3)
+		}
+		snap := market.Snapshot{
+			Mid:       mid,
+			BestBid:   bestBid,
+			BestAsk:   bestAsk,
+			Spread:    0,
+			Imbalance: imbalance,
+			Timestamp: time.Now().Unix(),
+		}
+		if bestBid > 0 && bestAsk > 0 && bestAsk > bestBid {
+			snap.Spread = bestAsk - bestBid
+		}
+		quotes = r.ASMMStrategy.GenerateQuotes(snap, r.Inv.NetExposure())
+		var bidFound, askFound bool
+		var bidSize, askSize float64
+		for _, q := range quotes {
+			if q.Side == asmm.Bid && !bidFound {
+				bid = q.Price
+				bidSize = q.Size
+				bidFound = true
+				if q.ReduceOnly {
+					asmmBidReduceOnly = true
+				}
+			} else if q.Side == asmm.Ask && !askFound {
+				ask = q.Price
+				askSize = q.Size
+				askFound = true
+				if q.ReduceOnly {
+					asmmAskReduceOnly = true
+				}
+			}
+			if bidFound && askFound {
+				break
+			}
+		}
+		// 统一下单尺寸：取两侧最小值（避免不一致）
+		if bidFound || askFound {
+			if bidFound && askFound {
+				size = bidSize
+				if askSize > 0 && askSize < size {
+					size = askSize
+				}
+			} else if bidFound {
+				size = bidSize
+			} else {
+				size = askSize
+			}
+		} else {
+			return errors.New("asmm: no quotes generated")
+		}
 	} else {
 		// 使用原有的网格策略
 		snap := strategy.MarketSnapshot{Mid: mid, Ts: time.Now()}
@@ -179,7 +281,7 @@ func (r *Runner) OnTick(mid float64) error {
 			spreadRatio = spreadAbs / mid
 		}
 	}
-	
+
 	// 如果是ASMM策略，bid和ask已经计算好了，不需要重新计算
 	if r.ASMMStrategy == nil {
 		bid = mid - spreadAbs/2
@@ -254,8 +356,8 @@ func (r *Runner) OnTick(mid float64) error {
 			r.reduceCooldownUntil = time.Time{}
 		}
 	}
-	buyReduceOnly := reduceOnly && allowBuy && !allowSell
-	sellReduceOnly := reduceOnly && allowSell && !allowBuy
+	buyReduceOnly := (reduceOnly && allowBuy && !allowSell) || asmmBidReduceOnly
+	sellReduceOnly := (reduceOnly && allowSell && !allowBuy) || asmmAskReduceOnly
 	bid, ask = r.applyReduceOnly(mid, bid, ask, allowBuy, allowSell)
 	var depthPlan reducePlan
 	buyPostOnly := r.postOnlyReady("BUY")
@@ -292,6 +394,57 @@ func (r *Runner) OnTick(mid float64) error {
 		depthPlan = plan
 	}
 
+	// 若ASMM返回多档报价，走多档差分下发路径
+	if r.ASMMStrategy != nil {
+		var bidQuotes, askQuotes []asmm.Quote
+		for _, q := range quotes {
+			if q.Side == asmm.Bid {
+				bidQuotes = append(bidQuotes, q)
+			} else if q.Side == asmm.Ask {
+				askQuotes = append(askQuotes, q)
+			}
+		}
+		if len(bidQuotes) > 1 || len(askQuotes) > 1 {
+			// 取消旧的单档动态订单
+			r.cancelOutstanding(true, true)
+			// 差分下发多档
+			r.reconcileDynamicQuotes(mid, bidQuotes, askQuotes, allowBuy, allowSell)
+			// 通知与静态挂单维护
+			r.lastQuoteTime = time.Now()
+			r.notifyStrategyAdjust(StrategyAdjustInfo{
+				Mid:                mid,
+				Spread:             ask - bid,
+				SpreadRatio:        spreadRatio,
+				VolFactor:          volFactor,
+				InventoryFactor:    invFactor,
+				Interval:           r.dynamicInterval(mid),
+				NetExposure:        net,
+				ReduceOnly:         reduceOnly,
+				TakeProfitActive:   r.TakeProfitPct > 0 && net != 0,
+				DepthFillPrice:     0,
+				DepthFillAvailable: 0,
+				DepthSlippage:      0,
+			})
+			metrics.SpreadGauge.WithLabelValues(r.Symbol).Set(ask - bid)
+			metrics.QuoteIntervalGauge.WithLabelValues(r.Symbol).Set(float64(r.dynamicInterval(mid)) / float64(time.Second))
+			r.manageStaticOrders(mid, spreadAbs, size, reduceOnly)
+			return nil
+		}
+	}
+
+	// 非多档路径，清理残留动态档位挂单
+	if len(r.dynamicBids) > 0 {
+		for i := range r.dynamicBids {
+			_ = r.cancelDynamicLeg(true, i)
+		}
+		r.dynamicBids = nil
+	}
+	if len(r.dynamicAsks) > 0 {
+		for i := range r.dynamicAsks {
+			_ = r.cancelDynamicLeg(false, i)
+		}
+		r.dynamicAsks = nil
+	}
 	placeBuy := allowBuy
 	placeSell := allowSell
 	cancelBid := !allowBuy
@@ -363,6 +516,7 @@ func (r *Runner) OnTick(mid float64) error {
 		r.lastBidID = bidOrder.ID
 		r.lastBidPrice = bid
 		r.lastBidPlacedAt = time.Now()
+		metrics.IncrementOrdersPlaced("buy")
 	}
 
 	// 卖单
@@ -398,6 +552,7 @@ func (r *Runner) OnTick(mid float64) error {
 		r.lastAskID = askOrder.ID
 		r.lastAskPrice = ask
 		r.lastAskPlacedAt = time.Now()
+		metrics.IncrementOrdersPlaced("sell")
 	}
 	if !allowBuy && !allowSell {
 		return fmt.Errorf("reduce_only_block net=%.4f", net)
@@ -417,6 +572,8 @@ func (r *Runner) OnTick(mid float64) error {
 		DepthFillAvailable: depthPlan.depthAvailable,
 		DepthSlippage:      depthPlan.slippage,
 	})
+	metrics.SpreadGauge.WithLabelValues(r.Symbol).Set(ask - bid)
+	metrics.QuoteIntervalGauge.WithLabelValues(r.Symbol).Set(float64(r.dynamicInterval(mid)) / float64(time.Second))
 	r.manageStaticOrders(mid, spreadAbs, size, reduceOnly)
 	return nil
 }
@@ -764,6 +921,11 @@ func (r *Runner) manageStaticOrders(mid, spreadAbs, baseSize float64, reduceOnly
 		r.cancelStaticOrders()
 		return
 	}
+	// 若存在多档动态腿，暂停静态挂单避免冲突
+	if len(r.dynamicBids) > 0 || len(r.dynamicAsks) > 0 {
+		r.cancelStaticOrders()
+		return
+	}
 	staticQty := baseSize * r.StaticFraction
 	if staticQty <= 0 {
 		return
@@ -1009,6 +1171,7 @@ func (r *Runner) submitOrderWithFallback(side string, ord order.Order, reduceOnl
 		if !reduceOnly && currentPostOnly && isPostOnlyReject(err) && !triedFallback {
 			r.enterPostOnlyCooldown(side)
 			r.bumpMakerShift(side)
+			metrics.IncrementPostOnlyRejectFallback(strings.ToLower(side))
 			currentPostOnly = false
 			ord.PostOnly = false
 			triedFallback = true
@@ -1059,6 +1222,190 @@ func (r *Runner) dynamicInterval(mid float64) time.Duration {
 	return time.Duration(float64(base) * factor)
 }
 
+// 多档差分下发与状态维护
+func (r *Runner) reconcileDynamicQuotes(mid float64, bidQuotes []asmm.Quote, askQuotes []asmm.Quote, allowBuy, allowSell bool) {
+	// 处理买侧
+	if allowBuy {
+		// 确保切片长度
+		if len(r.dynamicBids) < len(bidQuotes) {
+			r.dynamicBids = append(r.dynamicBids, make([]levelState, len(bidQuotes)-len(r.dynamicBids))...)
+		}
+		// 对每档进行差分
+		buyPOAllowed := r.postOnlyReady("BUY")
+		usedPOBuy := false
+		for i := 0; i < len(bidQuotes); i++ {
+			q := bidQuotes[i]
+			price := q.Price
+			qty := q.Size
+			// 对齐精度
+			var err error
+			price, _, qty, err = alignQuote(r.Constraints, price, price+1e-9, qty)
+			if err != nil || qty <= 0 {
+				continue
+			}
+			st := r.dynamicBids[i]
+			if q.ReduceOnly {
+				profitPositive := r.hasPositivePnL(mid)
+				if !r.shouldReplaceReduceOrder(st.price, price, mid, profitPositive) {
+					continue
+				}
+			} else {
+				if !r.shouldReplacePassive(st.price, price, st.placedAt) {
+					continue
+				}
+			}
+			_ = r.ensureDynamicOrder(true, i, price, qty, q.ReduceOnly, buyPOAllowed && !usedPOBuy)
+			if buyPOAllowed && !usedPOBuy {
+				metrics.IncrementPostOnlyUsage("buy")
+			}
+			usedPOBuy = true
+		}
+		// 取消多余档位
+		for i := len(bidQuotes); i < len(r.dynamicBids); i++ {
+			_ = r.cancelDynamicLeg(true, i)
+			metrics.IncrementDynamicOrderCancel("buy")
+		}
+	}
+	// 处理卖侧
+	if allowSell {
+		if len(r.dynamicAsks) < len(askQuotes) {
+			r.dynamicAsks = append(r.dynamicAsks, make([]levelState, len(askQuotes)-len(r.dynamicAsks))...)
+		}
+		sellPOAllowed := r.postOnlyReady("SELL")
+		usedPOSell := false
+		for i := 0; i < len(askQuotes); i++ {
+			q := askQuotes[i]
+			price := q.Price
+			qty := q.Size
+			var err error
+			_, price, qty, err = alignQuote(r.Constraints, price-1e-9, price, qty)
+			if err != nil || qty <= 0 {
+				continue
+			}
+			st := r.dynamicAsks[i]
+			if q.ReduceOnly {
+				profitPositive := r.hasPositivePnL(mid)
+				if !r.shouldReplaceReduceOrder(st.price, price, mid, profitPositive) {
+					continue
+				}
+			} else {
+				if !r.shouldReplacePassive(st.price, price, st.placedAt) {
+					continue
+				}
+			}
+			_ = r.ensureDynamicOrder(false, i, price, qty, q.ReduceOnly, sellPOAllowed && !usedPOSell)
+			if sellPOAllowed && !usedPOSell {
+				metrics.IncrementPostOnlyUsage("sell")
+			}
+			usedPOSell = true
+		}
+		for i := len(askQuotes); i < len(r.dynamicAsks); i++ {
+			_ = r.cancelDynamicLeg(false, i)
+			metrics.IncrementDynamicOrderCancel("sell")
+		}
+	}
+}
+
+func (r *Runner) ensureDynamicOrder(isBuy bool, idx int, price, qty float64, reduceOnly bool, postOnlyAllowed bool) error {
+	if r.OrderMgr == nil {
+		return errors.New("order manager nil")
+	}
+	side := "SELL"
+	if isBuy {
+		side = "BUY"
+	}
+	postOnly := postOnlyAllowed
+	if r.Risk != nil {
+		delta := qty
+		if !isBuy {
+			delta = -qty
+		}
+		if err := r.Risk.PreOrder(r.Symbol, delta); err != nil {
+			return err
+		}
+	}
+	ord := order.Order{
+		Symbol:      r.Symbol,
+		Side:        side,
+		Price:       price,
+		Quantity:    qty,
+		ReduceOnly:  reduceOnly,
+		PostOnly:    postOnly && !reduceOnly,
+		TimeInForce: "",
+		ClientID:    fmt.Sprintf("dyn-%s-%d", strings.ToLower(side), idx),
+	}
+	if reduceOnly {
+		ord.PostOnly = false
+		ord.TimeInForce = "IOC"
+	}
+	res, usedPostOnly, err := r.submitOrderWithFallback(side, ord, reduceOnly)
+	if err != nil {
+		return err
+	}
+	if isBuy {
+		if idx >= len(r.dynamicBids) {
+			return nil
+		}
+		st := r.dynamicBids[idx]
+		st.id = res.ID
+		st.price = price
+		st.placedAt = time.Now()
+		metrics.IncrementOrdersPlaced("buy")
+		metrics.IncrementDynamicOrderUpdate("buy")
+		if usedPostOnly {
+			r.clearPostOnlyCooldown("BUY")
+		}
+		r.dynamicBids[idx] = st
+	} else {
+		if idx >= len(r.dynamicAsks) {
+			return nil
+		}
+		st := r.dynamicAsks[idx]
+		st.id = res.ID
+		st.price = price
+		st.placedAt = time.Now()
+		metrics.IncrementOrdersPlaced("sell")
+		metrics.IncrementDynamicOrderUpdate("sell")
+		if usedPostOnly {
+			r.clearPostOnlyCooldown("SELL")
+		}
+		r.dynamicAsks[idx] = st
+	}
+	return nil
+}
+
+func (r *Runner) cancelDynamicLeg(isBuy bool, idx int) error {
+	// 检查是否应抑制撤单（高频成交时）
+	if r.shouldSuppressCancel() {
+		return nil // 抑制撤单，保持现有订单
+	}
+
+	var st levelState
+	if isBuy {
+		if idx >= len(r.dynamicBids) {
+			return nil
+		}
+		st = r.dynamicBids[idx]
+	} else {
+		if idx >= len(r.dynamicAsks) {
+			return nil
+		}
+		st = r.dynamicAsks[idx]
+	}
+	if st.id == "" || r.OrderMgr == nil {
+		return nil
+	}
+	_ = r.OrderMgr.Cancel(st.id)
+	metrics.IncrementDynamicOrderCancel(map[bool]string{true: "buy", false: "sell"}[isBuy])
+	st = levelState{}
+	if isBuy {
+		r.dynamicBids[idx] = st
+	} else {
+		r.dynamicAsks[idx] = st
+	}
+	return nil
+}
+
 func (r *Runner) cancelOutstanding(cancelBid, cancelAsk bool) {
 	if r.OrderMgr == nil {
 		return
@@ -1074,6 +1421,19 @@ func (r *Runner) cancelOutstanding(cancelBid, cancelAsk bool) {
 		r.lastAskID = ""
 		r.lastAskPrice = 0
 		r.lastAskPlacedAt = time.Time{}
+	}
+	// 同步取消多档动态腿
+	if cancelBid && len(r.dynamicBids) > 0 {
+		for i := range r.dynamicBids {
+			_ = r.cancelDynamicLeg(true, i)
+		}
+		r.dynamicBids = nil
+	}
+	if cancelAsk && len(r.dynamicAsks) > 0 {
+		for i := range r.dynamicAsks {
+			_ = r.cancelDynamicLeg(false, i)
+		}
+		r.dynamicAsks = nil
 	}
 }
 
@@ -1111,6 +1471,57 @@ func (r *Runner) SetRiskStateListener(fn func(RiskState, string)) {
 // SetStrategyAdjustListener 在策略参数更新时回调。
 func (r *Runner) SetStrategyAdjustListener(fn func(StrategyAdjustInfo)) {
 	r.onStrategyAdjust = fn
+}
+
+// SetAdaptiveRisk 设置自适应风控（包括 PostTrade Analyzer）
+func (r *Runner) SetAdaptiveRisk(analyzer *posttrade.Analyzer, adaptiveRisk *risk.AdaptiveRiskManager) {
+	r.postTradeAnalyzer = analyzer
+	r.adaptiveRisk = adaptiveRisk
+	r.lastAdaptiveUpdate = time.Now()
+
+	// 将 adaptiveRisk 注入 ASMM 策略
+	if r.ASMMStrategy != nil && adaptiveRisk != nil {
+		r.ASMMStrategy.SetAdaptiveRisk(adaptiveRisk)
+	}
+}
+
+// EnableCancelSuppression 启用高频成交时的撤单抑制
+func (r *Runner) EnableCancelSuppression(fillRateThreshold float64, recentFillsThreshold int) {
+	if r.fillTracker == nil {
+		r.fillTracker = order.NewFillTracker(100, 5*time.Minute)
+	}
+	r.cancelSuppressionEnabled = true
+	r.fillRateThreshold = fillRateThreshold
+	r.recentFillsThreshold = recentFillsThreshold
+}
+
+// OnFill 处理成交事件，通知 PostTrade Analyzer 和 FillTracker
+func (r *Runner) OnFill(orderID string, fillPrice float64, side string, quantity float64) {
+	if r.postTradeAnalyzer != nil {
+		r.postTradeAnalyzer.OnFill(orderID, fillPrice, side)
+	}
+	if r.fillTracker != nil {
+		r.fillTracker.RecordFill(orderID, side, fillPrice, quantity)
+	}
+}
+
+// shouldSuppressCancel 判断是否应抑制撤单（高频成交时）
+func (r *Runner) shouldSuppressCancel() bool {
+	if !r.cancelSuppressionEnabled || r.fillTracker == nil {
+		return false
+	}
+
+	// 使用默认阈值如果未设置
+	fillRateThreshold := r.fillRateThreshold
+	if fillRateThreshold <= 0 {
+		fillRateThreshold = 5.0 // 默认每分钟5次成交
+	}
+	recentFillsThreshold := r.recentFillsThreshold
+	if recentFillsThreshold <= 0 {
+		recentFillsThreshold = 3 // 默认1分钟内成交3次
+	}
+
+	return r.fillTracker.ShouldSuppressCancel(fillRateThreshold, recentFillsThreshold, 1*time.Minute)
 }
 
 // RiskStateUnsafe 返回当前风险状态（仅监控用途）。

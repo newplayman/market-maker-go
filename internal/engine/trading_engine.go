@@ -159,6 +159,11 @@ func (e *TradingEngine) Start(ctx context.Context) error {
 		e.mu.Unlock()
 		return fmt.Errorf("engine already started (state: %s)", e.state)
 	}
+	// 如果从 StateStopped 复启，需要重建通道
+	if e.state == StateStopped {
+		e.stopChan = make(chan struct{})
+		e.doneChan = make(chan struct{})
+	}
 	e.state = StateRunning
 	e.stats.StartTime = time.Now()
 	e.mu.Unlock()
@@ -191,12 +196,22 @@ func (e *TradingEngine) Stop() error {
 		e.mu.Unlock()
 		return fmt.Errorf("engine not running (state: %s)", e.state)
 	}
+	// 标记为停止中，防止重复调用
+	if e.state == StateStopped {
+		e.mu.Unlock()
+		return nil // 幂等：已停止则直接返回
+	}
 	e.mu.Unlock()
 
 	e.logger.Info("Trading engine stopping...")
 
-	// 发送停止信号
-	close(e.stopChan)
+	// 发送停止信号（仅当通道未关闭）
+	select {
+	case <-e.stopChan:
+		// 已关闭，跳过
+	default:
+		close(e.stopChan)
+	}
 
 	// 等待主循环结束
 	select {
