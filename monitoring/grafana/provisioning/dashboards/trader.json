@@ -1,0 +1,163 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": "-- Grafana --",
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "iteration": 1711007651,
+  "links": [],
+  "panels": [
+    {
+      "datasource": {"type": "prometheus", "uid": "ef4usqmf7qo74f"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 0}]}
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 6, "w": 12, "x": 0, "y": 0},
+      "id": 1,
+      "options": {"legend": {"calcs": [], "displayMode": "table", "placement": "bottom"}, "tooltip": {"mode": "single"}},
+      "targets": [
+        {"expr": "runner_mid_price", "legendFormat": "Mid", "refId": "A"},
+        {"expr": "runner_spread", "legendFormat": "Spread", "refId": "B"}
+      ],
+      "title": "Mid & Spread",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "ef4usqmf7qo74f"},
+      "fieldConfig": {"defaults": {"unit": "currencyUSD"}, "overrides": []},
+      "gridPos": {"h": 6, "w": 12, "x": 12, "y": 0},
+      "id": 2,
+      "options": {"legend": {"displayMode": "table", "placement": "bottom"}},
+      "targets": [
+        {"expr": "runner_position", "legendFormat": "Net Position", "refId": "A"},
+        {"expr": "runner_unrealized_pnl", "legendFormat": "Unrealized PnL", "refId": "B"}
+      ],
+      "title": "Position & Unrealized PnL",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "ef4usqmf7qo74f"},
+      "fieldConfig": {"defaults": {"unit": "short"}},
+      "gridPos": {"h": 5, "w": 6, "x": 0, "y": 6},
+      "id": 3,
+      "options": {"orientation": "auto", "reduceOptions": {"calcs": ["last"], "fields": "", "values": false}, "showThresholdLabels": false, "showThresholdMarkers": true},
+      "targets": [{"expr": "runner_orders_placed_total", "refId": "A"}],
+      "title": "Orders Placed",
+      "type": "gauge"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "ef4usqmf7qo74f"},
+      "gridPos": {"h": 5, "w": 6, "x": 6, "y": 6},
+      "id": 4,
+      "options": {"reduceOptions": {"calcs": ["last"], "fields": "", "values": false}},
+      "targets": [{"expr": "runner_rest_errors_total", "legendFormat": "{{action}}", "refId": "A"}],
+      "title": "REST Errors",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "ef4usqmf7qo74f"},
+      "gridPos": {"h": 5, "w": 6, "x": 12, "y": 6},
+      "id": 5,
+      "targets": [{"expr": "runner_risk_state", "refId": "A"}],
+      "title": "Risk State",
+      "type": "stat",
+      "options": {"reduceOptions": {"calcs": ["last"], "fields": "", "values": false}, "textMode": "value_and_name"}
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "ef4usqmf7qo74f"},
+      "gridPos": {"h": 5, "w": 6, "x": 18, "y": 6},
+      "id": 6,
+      "targets": [{"expr": "runner_quote_interval_seconds", "refId": "A"}],
+      "title": "Quote Interval",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "loki", "uid": "df4utum8cr5dsf"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 11},
+      "id": 7,
+      "options": {
+        "dedupStrategy": "none",
+        "limit": 100,
+        "showLabels": true,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true
+      },
+      "targets": [
+        {
+          "expr": "{job=\"runner\"} |= `order_update`",
+          "refId": "A"
+        }
+      ],
+      "title": "Recent Order Updates",
+      "type": "logs"
+    },
+    {
+      "datasource": {"type": "loki", "uid": "df4utum8cr5dsf"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 11},
+      "id": 8,
+      "options": {"dedupStrategy": "none", "limit": 100, "showLabels": true, "showTime": true},
+      "targets": [{"expr": "{job=\"runner\"} |= `quote_error`", "refId": "A"}],
+      "title": "Quote Errors",
+      "type": "logs"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "ef4usqmf7qo74f"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 19},
+      "id": 9,
+      "targets": [
+        {"expr": "rate(runner_rest_requests_total{action=\"place\"}[5m])", "legendFormat": "Place", "refId": "A"},
+        {"expr": "rate(runner_rest_requests_total{action=\"cancel\"}[5m])", "legendFormat": "Cancel", "refId": "B"}
+      ],
+      "title": "REST Throughput",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "ef4usqmf7qo74f"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 19},
+      "id": 10,
+      "targets": [
+        {"expr": "runner_rest_latency_seconds_sum{action=\"place\"} / runner_rest_latency_seconds_count{action=\"place\"}", "legendFormat": "Place", "refId": "A"},
+        {"expr": "runner_rest_latency_seconds_sum{action=\"cancel\"} / runner_rest_latency_seconds_count{action=\"cancel\"}", "legendFormat": "Cancel", "refId": "B"}
+      ],
+      "title": "REST Latency Avg",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "ef4usqmf7qo74f"},
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 27},
+      "id": 11,
+      "targets": [
+        {"expr": "runner_quotes_total", "legendFormat": "Quotes", "refId": "A"},
+        {"expr": "runner_orders_placed_total", "legendFormat": "Orders", "refId": "B"}
+      ],
+      "title": "Quote vs Orders",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 38,
+  "style": "dark",
+  "tags": ["runner", "trader"],
+  "time": {"from": "now-6h", "to": "now"},
+  "timepicker": {"refresh_intervals": ["5s", "10s", "30s", "1m", "5m", "15m", "30m", "1h"], "time_options": ["5m", "15m", "1h", "6h", "24h", "2d", "7d", "30d"]},
+  "timezone": "UTC",
+  "title": "Trader Dashboard",
+  "uid": "runner-trader"
+}

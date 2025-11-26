@@ -1,0 +1,77 @@
+env: production
+
+risk:
+  maxOrderValueUSDT: 50
+  maxNetExposure: 200
+
+gateway:
+  apiKey: "JDTnMB72CILecXzST7uex7qcvy185lFzzzItsoAim4o4NFa6Ey1bil6JGeXMZaeS"
+  apiSecret: "RvaTepu3VWxkR5FbE0LOf2C6gIrppNWjDwYeyalKM9SnVtr8yawLFBSf7rfT2rVI"
+  baseURL: "https://fapi.binance.com"
+
+inventory:
+  targetPosition: 0
+  maxDrift: 0.5
+
+symbols:
+  ETHUSDC:
+    tickSize: 0.01
+    stepSize: 0.001
+    minQty: 0.001
+    maxQty: 1000
+    minNotional: 10
+
+    strategy:
+      # === 做市参数（Round7） ===
+      minSpread: 0.0006
+      feeBuffer: 0.0002
+
+      baseSize: 0.009
+      targetPosition: 0
+      maxDrift: 0.5
+
+      quoteIntervalMs: 500
+      takeProfitPct: 0.0025
+
+      staticFraction: 0.97
+      staticTicks: 12
+      staticRestMs: 40000
+      dynamicRestMs: 8000
+      dynamicRestTicks: 0
+
+      # === 层级加宽与衰减 ===
+      layerSpacingMode: geometric
+      spacingRatio: 1.20
+      layerSizeDecay: 0.90
+      maxLayers: 24
+
+      # === 动量与自适应（占位，保留现有阈值） ===
+      inventoryPressureThreshold: 0.4
+      inventoryPressureStrength: 0.5
+      inventoryPressureExponent: 2.5
+      momentumThreshold: 0.0006
+      momentumAlpha: 0.08
+
+    risk:
+      # === 风控阈值（Round7） ===
+      singleMax: 0.06
+      dailyMax: 50.0
+      netMax: 0.21
+      latencyMs: 150
+
+      pnlMin: -15.0
+      pnlMax: 100.0
+
+      reduceOnlyThreshold: 25.0
+      reduceOnlyMaxSlippagePct: 0.0003
+      reduceOnlyMarketTriggerPct: 0.15
+
+      stopLoss: -60.0
+      haltSeconds: 300
+      shockPct: 0.10
+
+      # === 浮亏分层减仓（新增） ===
+      drawdownBands: [5, 8, 12]
+      reduceFractions: [0.15, 0.25, 0.40]
+      reduceMode: maker_first_then_taker
+      reduceCooldownSeconds: 120

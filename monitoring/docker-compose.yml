@@ -17,6 +17,8 @@ services:
       - '--storage.tsdb.retention.time=200h'
       - '--web.enable-lifecycle'
     restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - monitor-net
 
@@ -41,9 +43,34 @@ services:
     networks:
       - monitor-net
 
+  loki:
+    image: grafana/loki:2.9.6
+    container_name: loki
+    volumes:
+      - ./loki/loki-config.yml:/etc/loki/config/loki-config.yml
+      - loki_data:/loki
+    command:
+      - "-config.file=/etc/loki/config/loki-config.yml"
+    restart: unless-stopped
+    networks:
+      - monitor-net
+
+  promtail:
+    image: grafana/promtail:2.9.6
+    container_name: promtail
+    volumes:
+      - ./promtail/promtail-config.yml:/etc/promtail/config/promtail-config.yml
+      - ../logs:/var/log/market-maker
+    command:
+      - "-config.file=/etc/promtail/config/promtail-config.yml"
+    restart: unless-stopped
+    networks:
+      - monitor-net
+
 volumes:
   prometheus_data:
   grafana_data:
+  loki_data:
 
 networks:
   monitor-net:

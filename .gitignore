@@ -1,2 +1,25 @@
-logs/net_value_*.csv
-logs/net_value_runs_*.csv
+# Logs
+logs/*.log
+logs/*.txt
+logs/*.csv
+logs/*.flag
+
+# Compiled binaries
+binance_balance
+binance_position
+main
+market-maker-go
+runner
+/build/
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# Temporary files
+*.bak
+*.tmp
+*.swp

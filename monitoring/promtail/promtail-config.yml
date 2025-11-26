@@ -1,0 +1,15 @@
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+positions:
+  filename: /tmp/promtail-positions.yaml
+clients:
+  - url: http://172.19.0.4:3100/loki/api/v1/push
+scrape_configs:
+  - job_name: market_maker_logs
+    static_configs:
+      - targets: [localhost]
+        labels:
+          job: market-maker
+          env: container
+          __path__: /var/log/market-maker/*.log

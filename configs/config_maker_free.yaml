@@ -1,0 +1,104 @@
+env: production
+
+risk:
+  maxOrderValueUSDT: 50
+  maxNetExposure: 200
+
+gateway:
+  apiKey: "JDTnMB72CILecXzST7uex7qcvy185lFzzzItsoAim4o4NFa6Ey1bil6JGeXMZaeS"
+  apiSecret: "RvaTepu3VWxkR5FbE0LOf2C6gIrppNWjDwYeyalKM9SnVtr8yawLFBSf7rfT2rVI"
+  baseURL: "https://fapi.binance.com"
+
+inventory:
+  targetPosition: 0
+  maxDrift: 0.5
+
+symbols:
+  ETHUSDC:
+    tickSize: 0.01
+    stepSize: 0.001
+    minQty: 0.001
+    maxQty: 1000
+    minNotional: 10
+    
+    strategy:
+      # ========================================
+      # 价差设置 - 针对Maker免费优化
+      # ========================================
+      # Maker免费意味着不需要覆盖手续费，只需要覆盖滑点风险
+      minSpread: 0.0006          # 6 bps - 确保每单盈利(方案D)
+      feeBuffer: 0.0002          # 2 bps - 安全边际
+      # 总价差: 8 bps - 提升订单质量，减少滑点风险
+      
+      # ========================================
+      # 订单参数 - 保持高频优势
+      # ========================================
+      baseSize: 0.012            # 0.012 ETH (~35 USDC) - 适配200 USDC资金
+      targetPosition: 0          # 保持库存中性
+      maxDrift: 0.5              # 允许50%漂移
+      
+      # ========================================
+      # 报价频率控制 - 保持高频
+      # ========================================
+      # Maker免费支持高频！这是优势！
+      quoteIntervalMs: 500       # 500ms - 订单更稳定，减少取消率(方案D)
+      
+      # ========================================
+      # 止盈机制
+      # ========================================
+      takeProfitPct: 0.0025      # 0.25% - 更快锁定利润，降低回吐
+      
+      # ========================================
+      # 静态挂单优化 - 最大化Maker订单
+      # ========================================
+      # 核心：尽可能多用Maker订单，避免Taker
+      staticFraction: 0.97       # 97% Maker! 进一步提升静态挂单占比（24h）
+      staticTicks: 12            # 12 ticks容差
+      staticRestMs: 40000        # 40秒 - 24小时下更充分的自然成交时间
+      dynamicRestMs: 8000        # 8秒
+      dynamicRestTicks: 0        # 仅依赖时间
+      
+      # ========================================
+      # 库存管理 - 温和调整，避免强制Taker
+      # ========================================
+      inventoryPressureThreshold: 0.4     # 40% (允许适度波动)
+      inventoryPressureStrength: 0.5      # 0.5 (更温和，降低被动Taker概率)
+      inventoryPressureExponent: 2.5      # 2.5 (平滑调整)
+      
+      # ========================================
+      # 动量检测
+      # ========================================
+      momentumThreshold: 0.0006  # 0.06%
+      momentumAlpha: 0.08        # 稍微收敛，减少快速行情中的追价
+    
+    risk:
+      # ========================================
+      # 风控阈值 - 核心：避免强制Taker减仓
+      # ========================================
+      singleMax: 0.06            # 一次性减掉0.06净仓，匹配更高资金规模
+      dailyMax: 50.0             # 24小时最大亏损（提高容忍度）
+      netMax: 0.16               # 适度放宽至0.16，匹配200USDC规模
+      latencyMs: 150             # 下单间隔 (略微放宽)
+      
+      # ========================================
+      # PnL限制
+      # ========================================
+      pnlMin: -15.0              # PnL最小限制
+      pnlMax: 100.0              # PnL上限
+      
+      # ========================================
+      # 减仓控制 - 最关键！避免Taker
+      # ========================================
+      # 问题根源：33.2%的Taker导致24 USDC滑点损失
+      # 解决方案：大幅放宽阈值 + 优先Maker减仓
+      
+      reduceOnlyThreshold: 25.0          # 大幅放宽，几乎不触发! 核心改动(方案D)
+      reduceOnlyMaxSlippagePct: 0.0003   # 更严格的滑点限制（24h）
+      reduceOnlyMarketTriggerPct: 0.15   # 更极端才用市价（进一步压制市价风险）
+      
+      # ========================================
+      # 止损与熔断
+      # ========================================
+      stopLoss: -60.0            # 止损限制（24小时）
+      haltSeconds: 300           # 熔断时间
+      shockPct: 0.10             # 冲击阈值 10%

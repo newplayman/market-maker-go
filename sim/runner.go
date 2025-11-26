@@ -123,6 +123,11 @@ type Runner struct {
 	cancelSuppressionEnabled bool
 	fillRateThreshold        float64 // 成交率阈值（每分钟）
 	recentFillsThreshold     int     // 近期成交次数阈值
+	// 几何加宽层级参数
+	LayerSpacingMode string  // "geometric" 或 ""
+	SpacingRatio     float64 // 几何比例，例如 1.20
+	LayerSizeDecay   float64 // 远端下单量衰减，例如 0.90
+	MaxLayers        int     // 最大层数
 }
 
 // OnTick 是 Runner 的主循环：它会根据 mid 计算新的报价、处理 Reduce-only/静态挂单、调用 Risk Guard，
@@ -253,12 +258,46 @@ func (r *Runner) OnTick(mid float64) error {
 			return errors.New("asmm: no quotes generated")
 		}
 	} else {
-		// 使用原有的网格策略
+		// 使用原有的网格策略（支持几何加宽）
 		snap := strategy.MarketSnapshot{Mid: mid, Ts: time.Now()}
-		quote := r.Engine.QuoteZeroInventory(snap, invWrapper{r.Inv})
-		size = quote.Size
-		bid = quote.Bid
-		ask = quote.Ask
+		// 如果配置了几何加宽参数，则使用 BuildGeometricGrid
+		if r.LayerSpacingMode == "geometric" && r.SpacingRatio > 1.0 && r.MaxLayers > 0 {
+			levels := strategy.BuildGeometricGrid(mid, r.MaxLayers, r.Engine.BaseSize(), r.SpacingRatio, r.LayerSizeDecay)
+			if len(levels) > 0 {
+				// 简化：取首层 bid/ask
+				var bidLevel, askLevel *strategy.GridLevel
+				for i := range levels {
+					if levels[i].Price < mid && (bidLevel == nil || levels[i].Price > bidLevel.Price) {
+						bidLevel = &levels[i]
+					}
+					if levels[i].Price > mid && (askLevel == nil || levels[i].Price < askLevel.Price) {
+						askLevel = &levels[i]
+					}
+				}
+				if bidLevel != nil && askLevel != nil {
+					bid = bidLevel.Price
+					ask = askLevel.Price
+					size = bidLevel.Size
+					if askLevel.Size < size { size = askLevel.Size }
+				} else {
+					// fallback
+					quote := r.Engine.QuoteZeroInventory(snap, invWrapper{r.Inv})
+					size = quote.Size
+					bid = quote.Bid
+					ask = quote.Ask
+				}
+			} else {
+				quote := r.Engine.QuoteZeroInventory(snap, invWrapper{r.Inv})
+				size = quote.Size
+				bid = quote.Bid
+				ask = quote.Ask
+			}
+		} else {
+			quote := r.Engine.QuoteZeroInventory(snap, invWrapper{r.Inv})
+			size = quote.Size
+			bid = quote.Bid
+			ask = quote.Ask
+		}
 	}
 
 	if size <= 0 {

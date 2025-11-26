@@ -1,0 +1,18 @@
+{
+  "timestamp": "2025-11-25T17:29:41+00:00",
+  "position": {
+    "quantity": 0.096000,
+    "entry_price": 2929.0925,
+    "mark_price": 2928.5100,
+    "unrealized_pnl": -0.0559
+  },
+  "balance": {
+    "total": 199.81621420,
+    "available": 164.61949442
+  },
+  "statistics": {
+    "total_orders": 1266,
+    "filled_orders": 627,
+    "risk_triggers": 334
+  }
+}

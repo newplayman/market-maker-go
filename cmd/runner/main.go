@@ -294,6 +294,20 @@ func main() {
 		})
 	}
 	runner.Risk = risk.MultiGuard{Guards: guards}
+	// DrawdownManager （浮亏分层减仓）
+	var ddMgr *risk.DrawdownManager
+	if len(symConf.Risk.DrawdownBands) > 0 && len(symConf.Risk.ReduceFractions) > 0 {
+		ddMgr = &risk.DrawdownManager{
+			Bands:     symConf.Risk.DrawdownBands,
+			Fractions: symConf.Risk.ReduceFractions,
+			Mode:      symConf.Risk.ReduceMode,
+			Cooldown:  time.Duration(symConf.Risk.ReduceCooldownSeconds) * time.Second,
+			PnL:       &risk.InventoryPnL{Tracker: inv, MidFn: book.Mid},
+			Pos:       &trackerInventory{tr: inv},
+			NetMax:    riskConf.NetMax,
+			Base:      stratParams.BaseSize,
+		}
+	}
 	runner.SetRiskStateListener(func(state sim.RiskState, reason string) {
 		fields := map[string]interface{}{
 			"symbol": symbolUpper,
@@ -373,10 +387,23 @@ func main() {
 				switch o.Status {
 				case "FILLED":
 					_ = mgr.Update(o.ClientOrderID, order.StatusFilled)
+					// 记录成交
+					side := "buy"
+					if o.Side == "SELL" {
+						side = "sell"
+					}
+					metrics.IncrementFill(symbolUpper, side)
 				case "PARTIALLY_FILLED":
 					_ = mgr.Update(o.ClientOrderID, order.StatusPartial)
+					// 部分成交也计数
+					side := "buy"
+					if o.Side == "SELL" {
+						side = "sell"
+					}
+					metrics.IncrementFill(symbolUpper, side)
 				case "CANCELED":
 					_ = mgr.Update(o.ClientOrderID, order.StatusCanceled)
+					metrics.IncrementOrderCanceled(symbolUpper)
 				case "REJECTED":
 					_ = mgr.Update(o.ClientOrderID, order.StatusRejected)
 				case "EXPIRED", "EXPIRED_IN_MATCH", "EXPIRED_IN_CANCEL":
@@ -502,6 +529,51 @@ func main() {
 				net, pnl := inv.Valuation(mid)
 				mc.position.Set(net)
 				mc.pnl.Set(pnl)
+
+				// 更新核心 Prometheus 指标（用于 Grafana）
+				bid, ask := book.Best()
+				metrics.UpdateMarketData(symbolUpper, mid, bid, ask)
+				metrics.UpdatePositionMetrics(
+					symbolUpper,
+					net,
+					inv.AvgCost(),
+					pnl,
+					0, // realizedPnL暂无单独追踪，设为0
+				)
+				// 更新活跃订单数
+				allOrders := mgr.GetActiveOrders()
+				activeBids, activeAsks := 0, 0
+				for _, ord := range allOrders {
+					if ord.Side == "BUY" {
+						activeBids++
+					} else if ord.Side == "SELL" {
+						activeAsks++
+					}
+				}
+				metrics.UpdateOrderMetrics(symbolUpper, activeBids, activeAsks)
+				// DrawdownManager 周期检查并触发减仓（如果配置）
+				if ddMgr != nil {
+					// 简化：浮亏百分比 = |pnl| / (initialBalance 200 约定)  * 100
+					initialBalance := 200.0
+					drawdownPct := 0.0
+					if pnl < 0 && initialBalance > 0 {
+						drawdownPct = (-pnl / initialBalance) * 100.0
+					}
+					if qty, preferMaker, band := ddMgr.Plan(symbolUpper, drawdownPct); qty > 0 {
+						// 触发减仓
+						logEvent("drawdown_trigger", map[string]interface{}{
+							"symbol":       symbolUpper,
+							"drawdownPct":  drawdownPct,
+							"triggeredBand": band,
+							"reduceQty":    qty,
+							"preferMaker":  preferMaker,
+							"net":          net,
+						})
+						ddMgr.MarkAction()
+						// 这里仅记录，具体的减仓逻辑由 sim.Runner 处理
+						// 如需，可进一步将 qty 传给 runner 以在下一 OnTick 做专门减仓
+					}
+				}
 				if err := runner.OnTick(mid); err != nil {
 					mc.riskRejects.Inc()
 					logEvent("quote_error", map[string]interface{}{"symbol": symbolUpper, "error": err.Error()})
@@ -560,6 +632,12 @@ func (g *restOrderGateway) Place(o order.Order) (string, error) {
 	// metrics.RestLatencyHistogram.WithLabelValues("place", g.symbol).Observe(time.Since(start).Seconds())
 	g.metrics.incOrdersPlaced(string(o.Side))
 	// metrics.OrdersPlacedCounter.WithLabelValues(g.symbol).Inc()
+	// 记录下单指标
+	side := "buy"
+	if o.Side == "SELL" {
+		side = "sell"
+	}
+	metrics.IncrementOrderPlaced(g.symbol, side)
 	return exchangeOrderID, nil
 }
 

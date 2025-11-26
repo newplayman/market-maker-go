@@ -427,6 +427,34 @@ func (e *TradingEngine) placeOrder(quote strategy.Quote) error {
 		}
 	}
 
+	// 在提交前按净仓上限收敛下单量
+	// 仅当本次动作会扩大绝对净仓时，按剩余容量收敛 size
+	{
+		net := e.inventory.NetExposure()
+		maxInv := e.strategy.GetConfig().MaxInventory
+		if maxInv > 0 {
+			var delta float64
+			if quote.Side == "BUY" {
+				delta = quote.Size
+			} else {
+				delta = -quote.Size
+			}
+			curAbs := net
+			if curAbs < 0 { curAbs = -curAbs }
+			new := net + delta
+			newAbs := new
+			if newAbs < 0 { newAbs = -newAbs }
+			if newAbs > curAbs {
+				remaining := maxInv - curAbs
+				if remaining <= 0 {
+					return fmt.Errorf("pre-trade capacity exhausted: |%.4f| >= %.4f", curAbs, maxInv)
+				}
+				if remaining < quote.Size {
+					quote.Size = remaining
+				}
+			}
+		}
+	}
 	// 下单
 	newOrder, err := e.orderMgr.Submit(order.Order{
 		Symbol:   e.config.Symbol,

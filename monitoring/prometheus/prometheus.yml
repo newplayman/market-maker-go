@@ -25,4 +25,4 @@ scrape_configs:
   # Market Maker Go监控
   - job_name: 'market-maker-go'
     static_configs:
-    - targets: ['host.docker.internal:8080'] # market-maker-go默认指标端口
+    - targets: ['172.17.0.1:8080'] # market-maker-go metrics 端口 (宿主机 docker0 IP)

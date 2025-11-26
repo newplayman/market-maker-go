@@ -226,3 +226,116 @@ func UpdateFillTrackerMetrics(fillRate float64, recentFills int, suppressionActi
 		CancelSuppressionActive.Set(0)
 	}
 }
+
+// 核心运行时指标
+var (
+	// MidPrice 中间价
+	MidPrice = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "mm_mid_price",
+		Help: "Current mid price",
+	}, []string{"symbol"})
+
+	// BidPrice 买一价
+	BidPrice = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "mm_bid_price",
+		Help: "Current best bid price",
+	}, []string{"symbol"})
+
+	// AskPrice 卖一价
+	AskPrice = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "mm_ask_price",
+		Help: "Current best ask price",
+	}, []string{"symbol"})
+
+	// Position 当前仓位
+	Position = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "mm_position",
+		Help: "Current net position",
+	}, []string{"symbol"})
+
+	// EntryPrice 持仓均价
+	EntryPrice = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "mm_entry_price",
+		Help: "Average entry price",
+	}, []string{"symbol"})
+
+	// UnrealizedPnL 未实现盈亏
+	UnrealizedPnL = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "mm_unrealized_pnl",
+		Help: "Unrealized PnL in USD",
+	}, []string{"symbol"})
+
+	// RealizedPnL 已实现盈亏
+	RealizedPnL = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "mm_realized_pnl",
+		Help: "Realized PnL in USD",
+	}, []string{"symbol"})
+
+	// ActiveOrders 活跃订单数
+	ActiveOrders = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "mm_active_orders",
+		Help: "Number of active orders",
+	}, []string{"symbol", "side"})
+
+	// TotalFills 总成交次数
+	TotalFills = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "mm_total_fills",
+		Help: "Total number of fills",
+	}, []string{"symbol", "side"})
+
+	// OrdersPlaced 下单次数
+	OrdersPlaced = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "mm_orders_placed_count",
+		Help: "Total orders placed",
+	}, []string{"symbol", "side"})
+
+	// OrdersCanceled 撤单次数
+	OrdersCanceled = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "mm_orders_canceled_count",
+		Help: "Total orders canceled",
+	}, []string{"symbol"})
+)
+
+// UpdateMarketData 更新市场数据指标
+func UpdateMarketData(symbol string, mid, bid, ask float64) {
+	if mid > 0 {
+		MidPrice.WithLabelValues(symbol).Set(mid)
+	}
+	if bid > 0 {
+		BidPrice.WithLabelValues(symbol).Set(bid)
+	}
+	if ask > 0 {
+		AskPrice.WithLabelValues(symbol).Set(ask)
+	}
+}
+
+// UpdatePositionMetrics 更新仓位指标
+func UpdatePositionMetrics(symbol string, position, entryPrice, unrealizedPnL, realizedPnL float64) {
+	Position.WithLabelValues(symbol).Set(position)
+	if entryPrice > 0 {
+		EntryPrice.WithLabelValues(symbol).Set(entryPrice)
+	}
+	UnrealizedPnL.WithLabelValues(symbol).Set(unrealizedPnL)
+	RealizedPnL.WithLabelValues(symbol).Set(realizedPnL)
+}
+
+// UpdateOrderMetrics 更新订单指标
+func UpdateOrderMetrics(symbol string, activeBids, activeAsks int) {
+	ActiveOrders.WithLabelValues(symbol, "buy").Set(float64(activeBids))
+	ActiveOrders.WithLabelValues(symbol, "sell").Set(float64(activeAsks))
+}
+
+// IncrementFill 成交计数
+func IncrementFill(symbol, side string) {
+	TotalFills.WithLabelValues(symbol, side).Inc()
+}
+
+// IncrementOrderPlaced 下单计数
+func IncrementOrderPlaced(symbol, side string) {
+	OrdersPlaced.WithLabelValues(symbol, side).Inc()
+}
+
+// IncrementOrderCanceled 撤单计数
+func IncrementOrderCanceled(symbol string) {
+	OrdersCanceled.WithLabelValues(symbol).Inc()
+}

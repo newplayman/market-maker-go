@@ -88,8 +88,13 @@ func NewAdaptiveRiskManager(analyzer *posttrade.Analyzer, config AdaptiveConfig)
 	}
 }
 
-// Update 根据事后分析更新参数
+// Update 根据事后分析更新参数。
+// 如果外部传入 forceTrend=true，将强制走“高逆选”分支（下降 netMax/baseSize、上升 spread）以应对趋势防御模式。
 func (a *AdaptiveRiskManager) Update() {
+	a.UpdateWithTrend(false)
+}
+
+func (a *AdaptiveRiskManager) UpdateWithTrend(forceTrend bool) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -117,6 +122,11 @@ func (a *AdaptiveRiskManager) Update() {
 		avgAdverseRate += rate
 	}
 	avgAdverseRate /= float64(len(a.recentAdverseRates))
+
+	// 如果强制趋势，视为高逆选分支
+	if forceTrend {
+		avgAdverseRate = a.config.AdverseThresholdHigh + 0.01
+	}
 
 	// 根据逆选率调整参数
 	a.adjustParameters(avgAdverseRate)

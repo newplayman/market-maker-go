@@ -66,6 +66,11 @@ type StrategyParams struct {
 	EnableMultiLayer           bool    `yaml:"enableMultiLayer"`         // 是否启用多层持仓
 	LayerCount                 int     `yaml:"layerCount"`               // 层数（2-3）
 	LayerSpacing               float64 `yaml:"layerSpacing"`             // 层间距（百分比）
+	// 几何网格参数
+	LayerSpacingMode           string  `yaml:"layerSpacingMode"`         // "linear" or "geometric"
+	SpacingRatio               float64 `yaml:"spacingRatio"`             // 几何模式下层间距比例（如 1.20）
+	LayerSizeDecay             float64 `yaml:"layerSizeDecay"`           // 远端下单量衰减系数（如 0.90）
+	MaxLayers                  int     `yaml:"maxLayers"`                // 最大层数（默认 24）
 	
 	// ASMM策略专用参数
 	MinSpreadBps               float64 `yaml:"minSpreadBps"`             // 最小价差（基点）
@@ -83,18 +88,23 @@ type StrategyParams struct {
 }
 
 type SymbolRisk struct {
-	SingleMax                  float64 `yaml:"singleMax"`
-	DailyMax                   float64 `yaml:"dailyMax"`
-	NetMax                     float64 `yaml:"netMax"`
-	LatencyMs                  int     `yaml:"latencyMs"`
-	PnLMin                     float64 `yaml:"pnlMin"`
-	PnLMax                     float64 `yaml:"pnlMax"`
-	ReduceOnlyThreshold        float64 `yaml:"reduceOnlyThreshold"`
-	ReduceOnlyMaxSlippagePct   float64 `yaml:"reduceOnlyMaxSlippagePct"`
-	ReduceOnlyMarketTriggerPct float64 `yaml:"reduceOnlyMarketTriggerPct"`
-	StopLoss                   float64 `yaml:"stopLoss"`
-	HaltSeconds                int     `yaml:"haltSeconds"`
-	ShockPct                   float64 `yaml:"shockPct"`
+	SingleMax                  float64   `yaml:"singleMax"`
+	DailyMax                   float64   `yaml:"dailyMax"`
+	NetMax                     float64   `yaml:"netMax"`
+	LatencyMs                  int       `yaml:"latencyMs"`
+	PnLMin                     float64   `yaml:"pnlMin"`
+	PnLMax                     float64   `yaml:"pnlMax"`
+	ReduceOnlyThreshold        float64   `yaml:"reduceOnlyThreshold"`
+	ReduceOnlyMaxSlippagePct   float64   `yaml:"reduceOnlyMaxSlippagePct"`
+	ReduceOnlyMarketTriggerPct float64   `yaml:"reduceOnlyMarketTriggerPct"`
+	StopLoss                   float64   `yaml:"stopLoss"`
+	HaltSeconds                int       `yaml:"haltSeconds"`
+	ShockPct                   float64   `yaml:"shockPct"`
+	// 浮亏分层减仓
+	DrawdownBands           []float64 `yaml:"drawdownBands"`
+	ReduceFractions         []float64 `yaml:"reduceFractions"`
+	ReduceMode              string    `yaml:"reduceMode"`
+	ReduceCooldownSeconds   int       `yaml:"reduceCooldownSeconds"`
 }
 
 // Load reads YAML config from path and applies basic validation.
