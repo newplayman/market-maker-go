@@ -3,6 +3,7 @@ package container
 import (
 	"context"
 	"fmt"
+	"math"
 	"net/http"
 	"time"
 
@@ -100,7 +101,7 @@ func (c *Container) buildGateway() error {
 		Secret:       c.cfg.Gateway.APISecret,
 		HTTPClient:   gateway.NewDefaultHTTPClient(),
 		RecvWindowMs: 5000,
-		Limiter:      gateway.NewTokenBucketLimiter(5.0, 10),
+		Limiter:      gateway.NewCompositeLimiter(25.0, 50, 280, 2200),
 		MaxRetries:   3,
 		RetryDelay:   200 * time.Millisecond,
 	}
@@ -165,6 +166,36 @@ func (c *Container) Stop() error {
 	if err := c.lifecycle.StopAll(); err != nil {
 		c.logger.LogError(err, map[string]interface{}{"action": "stop"})
 		return err
+	}
+
+	// 安全清场：撤单 + 平仓
+	for sym := range c.cfg.Symbols {
+		// 撤销所有挂单
+		if err := c.restClient.CancelAll(sym); err != nil {
+			c.logger.LogError(err, map[string]interface{}{"action": "cancel_all", "symbol": sym})
+		} else {
+			c.logger.Logger.Info(fmt.Sprintf("[%s] 所有挂单已撤销", sym))
+		}
+		// 查询持仓并平仓（reduce-only 市价）
+		positions, err := c.restClient.PositionRisk(sym)
+		if err != nil {
+			c.logger.LogError(err, map[string]interface{}{"action": "position_risk", "symbol": sym})
+			continue
+		}
+		var net float64
+		for _, p := range positions {
+			net += p.PositionAmt
+		}
+		if math.Abs(net) > 1e-8 {
+			side := "SELL"
+			qty := math.Abs(net)
+			if net < 0 { side = "BUY" }
+			if _, err := c.restClient.PlaceMarket(sym, side, qty, true, "shutdown-clean"); err != nil {
+				c.logger.LogError(err, map[string]interface{}{"action": "flatten", "symbol": sym, "qty": qty})
+			} else {
+				c.logger.Logger.Info(fmt.Sprintf("[%s] 已提交 reduce-only %s 市价平仓，数量 %.6f", sym, side, qty))
+			}
+		}
 	}
 
 	if c.logger != nil {

@@ -2,15 +2,20 @@
 package metrics
 
 import (
+	"log"
 	"net/http"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 // StartMetricsServer 启动Prometheus指标服务器
 func StartMetricsServer(addr string) {
-	http.Handle("/metrics", promhttp.Handler())
+	mux := http.NewServeMux()
+	mux.Handle("/metrics", promhttp.HandlerFor(prometheus.DefaultGatherer, promhttp.HandlerOpts{}))
 	go func() {
-		_ = http.ListenAndServe(addr, nil)
+		if err := http.ListenAndServe(addr, mux); err != nil {
+			log.Fatalf("metrics server listen error: %v", err)
+		}
 	}()
 }

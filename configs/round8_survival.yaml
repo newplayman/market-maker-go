@@ -1,0 +1,41 @@
+symbol: ETHUSDC
+quote_interval_ms: 220
+
+# ===== 基础做市参数 =====
+base_size: 0.007
+net_max: 0.20                          # 硬帽，绝对不能改大
+min_spread: 0.00065
+
+# ===== 几何网格（保留你原来写法）=====
+layer_spacing_mode: geometric
+spacing_ratio: 1.35
+layer_size_decay: 0.92
+max_layers: 14
+
+# ===== 防扫单核心（最致命）=====
+worst_case:
+  multiplier: 1.15                     # 允许超挂 15%（给波动留余量）
+  size_decay_k: 3.8                    # 指数衰减系数，越高越激进（推荐 3.6~4.2）
+
+# ===== 资金费率真实成本 =====
+funding:
+  sensitivity: 2.2                     # 保留价偏移强度
+  predict_alpha: 0.25                  # EMA 预测下一期费率
+
+# ===== 磨成本核武器 =====
+grinding:
+  enabled: true
+  trigger_ratio: 0.87                  # 仓位 ≥87% net_max 触发
+  range_std_threshold: 0.0038          # 30分钟价格标准差阈值（<0.38% 才磨）
+  grind_size_pct: 0.075                # 每次反向 taker 7.5% 仓位
+  reentry_spread_bps: 4.2              # 重新挂 maker 单的有利偏移
+  max_grind_per_hour: 18
+  min_interval_sec: 42
+  funding_boost: true
+  funding_favor_multiplier: 1.4
+
+# ===== 分层减仓（放宽，减少误触发）=====
+drawdown_bands: [6.0, 11.0, 17.0]
+reduce_fractions: [0.25, 0.45, 0.80]
+twap_slices: 4
+twap_interval_ms: 1200
