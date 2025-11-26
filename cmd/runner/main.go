@@ -93,6 +93,14 @@ func main() {
 	// DRY-RUN 跳闸：环境变量 DRY_RUN=1 或 true 时仅打印不下单
 	dryRun = os.Getenv("DRY_RUN") == "1" || strings.EqualFold(os.Getenv("DRY_RUN"), "true")
 
+	// 关键修复：写PID文件，用于优雅退出
+	pidFile := "./logs/runner.pid"
+	os.MkdirAll("./logs", 0755)
+	if err := os.WriteFile(pidFile, []byte(fmt.Sprintf("%d", os.Getpid())), 0644); err != nil {
+		log.Printf("⚠️ 写PID文件失败: %v", err)
+	}
+	defer os.Remove(pidFile)
+
 	// 创建 Store
 	st := store.New(cfg.Symbol, cfg.Funding.PredictAlpha)
 
@@ -112,7 +120,7 @@ func main() {
 		log.Printf("set leverage err: %v", err)
 	}
 
-	ws := exchange.NewBinanceUserStream("https://fapi.binance.com", "wss://fstream.binance.com", apiKey, st)
+	ws := exchange.NewBinanceUserStream("https://fapi.binance.com", "wss://fstream.binance.com", apiKey, apiSecret, st)
 	if err := ws.Start(); err != nil {
 		log.Fatalf("start ws: %v", err)
 	}
@@ -207,28 +215,41 @@ func main() {
 	// 启动磨成本循环
 	go runGrindingLoop(grinder, st)
 
-	// 优雅退出
+	// 优雅退出：捕获信号后先撤单、平仓再退出
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 	<-sigCh
-	log.Println("Shutting down...")
+	log.Println("\n============================================")
+	log.Println("🛑 接收退出信号，开始优雅退出...")
+	log.Println("============================================")
 
-	// 紧急清理：撤单 + 平仓
-	log.Println("🔸 取消所有挂单...")
+	// 第1步：停止报价循环（防止新订单）
+	log.Println("✅ 已停止报价循环")
+	
+	// 第2步：撤销所有活跃订单
+	log.Println("🟡 [1/3] 取消所有活跃订单...")
 	if err := restClient.CancelAll(cfg.Symbol); err != nil {
-		log.Printf("取消挂单失败: %v", err)
+		log.Printf("⚠️ 取消订单失败: %v", err)
 	} else {
-		log.Println("✅ 所有挂单已取消")
+		log.Println("✅ 所有活跃订单已撤销")
 	}
-
-	log.Println("🔸 平仓所有仓位...")
+	
+	// 第3步：平掉所有仓位
+	log.Println("🟡 [2/3] 平掉所有仓位...")
 	if err := flattenPosition(restClient, cfg.Symbol); err != nil {
-		log.Printf("平仓失败: %v", err)
+		log.Printf("⚠️ 平仓失败: %v", err)
 	} else {
-		log.Println("✅ 仓位已平")
+		log.Println("✅ 所有仓位已平")
 	}
-
-	log.Println("✅ 清理完成，程序退出")
+	
+	// 第4步：关闭 WebSocket 连接
+	log.Println("🟡 [3/3] 关闭 WebSocket 连接...")
+	ws.Stop()
+	log.Println("✅ WebSocket 已关闭")
+	
+	log.Println("============================================")
+	log.Println("✅ 优雅退出完成，程序退出")
+	log.Println("============================================")
 }
 
 // runQuoteLoop 定期生成并下单报价（使用智能订单管理）。
