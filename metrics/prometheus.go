@@ -296,6 +296,91 @@ var (
 	}, []string{"symbol"})
 )
 
+// Round8 Survival 新增指标
+var (
+	WorstCaseLong = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "mm_worst_case_long",
+		Help: "Worst-case long exposure",
+	})
+	WorstCaseShort = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "mm_worst_case_short",
+		Help: "Worst-case short exposure",
+	})
+	DynamicDecayFactor = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "mm_dynamic_decay_factor",
+		Help: "Current size decay factor",
+	})
+	FundingPnlAccum = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "mm_funding_pnl_acc",
+		Help: "Accumulated funding PnL",
+	})
+	PredictedFundingRate = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "mm_predicted_funding_rate",
+		Help: "Predicted next funding rate",
+	})
+	GrindCountTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "mm_grind_count_total",
+		Help: "Total grind executions",
+	})
+	GrindActive = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "mm_grind_active",
+		Help: "Grinding active (1=active, 0=inactive)",
+	})
+	GrindCostSaved = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "mm_grind_cost_saved",
+		Help: "Estimated cost saved by grinding",
+	})
+	PriceStdDev30m = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "mm_price_stddev_30m",
+		Help: "30-minute price standard deviation",
+	})
+	QuoteSuppressed = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "mm_quote_suppressed",
+		Help: "Quote suppressed due to worst-case (1=yes, 0=no)",
+	})
+	WSConnected = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "mm_ws_connected",
+		Help: "WebSocket connection status (1=connected, 0=disconnected)",
+	})
+	RestFallbackCount = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "mm_rest_fallback_count",
+		Help: "REST fallback usage count",
+	})
+	PendingExposure = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "mm_pending_exposure",
+		Help: "Pending order quantity grouped by side",
+	}, []string{"symbol", "side"})
+	RunnerRiskState = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "mm_runner_risk_state",
+		Help: "Runner risk state (0=normal,1=soft reduce,2=hard reduce)",
+	}, []string{"symbol"})
+	ReduceOnlyForceCount = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "mm_reduce_only_force_total",
+		Help: "Reduce-only forced market actions",
+	}, []string{"symbol"})
+
+	PinningActive = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "mm_pinning_active",
+		Help: "Pinning mode active (1=active, 0=inactive)",
+	})
+	FarQuotesCount = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "mm_far_quotes_count",
+		Help: "Number of far quotes placed",
+	})
+	QuoteFlickerRate = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "mm_quote_flicker_rate",
+		Help: "Quote flicker rate per minute",
+	})
+	FillRate5m = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "mm_fill_rate_5m",
+		Help: "Fill rate over last 5 minutes",
+	})
+	FundingRate = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "mm_funding_rate_current",
+		Help: "Current funding rate",
+	})
+)
+
 // UpdateMarketData 更新市场数据指标
 func UpdateMarketData(symbol string, mid, bid, ask float64) {
 	if mid > 0 {
@@ -323,6 +408,12 @@ func UpdatePositionMetrics(symbol string, position, entryPrice, unrealizedPnL, r
 func UpdateOrderMetrics(symbol string, activeBids, activeAsks int) {
 	ActiveOrders.WithLabelValues(symbol, "buy").Set(float64(activeBids))
 	ActiveOrders.WithLabelValues(symbol, "sell").Set(float64(activeAsks))
+}
+
+// UpdatePendingExposure 更新挂单敞口
+func UpdatePendingExposure(symbol string, pendingBuy, pendingSell float64) {
+	PendingExposure.WithLabelValues(symbol, "buy").Set(pendingBuy)
+	PendingExposure.WithLabelValues(symbol, "sell").Set(pendingSell)
 }
 
 // IncrementFill 成交计数

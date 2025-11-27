@@ -1,24 +1,27 @@
 [Unit]
-Description=Market Maker Runner
+Description=Market Maker Runner (single symbol)
 After=network-online.target
 Wants=network-online.target
 
 [Service]
-Type=simple
+Type=notify
 WorkingDirectory=/opt/market-maker
-Environment="CONFIG_PATH=/opt/market-maker/configs/config.yaml"
-Environment="SYMBOL=ETHUSDC"
-Environment="DRY_RUN=false"
-Environment="REST_RATE=5"
-Environment="REST_BURST=10"
-Environment="METRICS_ADDR=:9100"
-Environment="LOG_PATH=/var/log/market-maker/runner.log"
 User=runner
 Group=runner
-ExecStart=/usr/bin/env bash /opt/market-maker/scripts/run_runner.sh
-Restart=always
-RestartSec=5
+Environment="CONFIG_PATH=/opt/market-maker/configs/round8_survival.yaml"
+Environment="METRICS_ADDR=:9101"
+Environment="DRY_RUN=false"
+ExecStart=/opt/market-maker/bin/runner -config=${CONFIG_PATH} -metricsAddr=${METRICS_ADDR}
+ExecStop=/opt/market-maker/scripts/graceful_shutdown.sh
+PIDFile=/opt/market-maker/logs/runner.pid
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=45
+Restart=on-failure
+RestartSec=10
 LimitNOFILE=65535
+RuntimeDirectory=market-maker
+RuntimeDirectoryMode=0755
 StandardOutput=append:/var/log/market-maker/runner.log
 StandardError=append:/var/log/market-maker/runner.log
 

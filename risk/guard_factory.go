@@ -11,10 +11,10 @@ type Inventory interface {
 }
 
 // BuildGuards 方便组装常用的风控组合。
-func BuildGuards(limitCfg *Limits, inv Inventory, maxSpreadRatio float64, ob *market.OrderBook, pnlGuard Guard, freqGuard Guard) Guard {
+func BuildGuards(limitCfg *Limits, inv Inventory, pending PendingExposureProvider, maxSpreadRatio float64, ob *market.OrderBook, pnlGuard Guard, freqGuard Guard) Guard {
 	var guards []Guard
 	if limitCfg != nil {
-		guards = append(guards, NewLimitChecker(limitCfg, inv))
+		guards = append(guards, NewLimitChecker(limitCfg, inv, pending))
 	}
 	if maxSpreadRatio > 0 && ob != nil {
 		guards = append(guards, &VWAPGuard{MaxSpreadRatio: maxSpreadRatio, Book: ob})

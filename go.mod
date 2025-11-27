@@ -3,6 +3,7 @@ module market-maker-go
 go 1.25.4
 
 require (
+	github.com/coreos/go-systemd/v22 v22.5.0
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/prometheus/client_golang v1.18.0
 	github.com/stretchr/testify v1.8.1

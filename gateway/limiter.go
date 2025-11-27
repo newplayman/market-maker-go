@@ -54,3 +54,57 @@ func (l *TokenBucketLimiter) Wait() {
 		l.tokens -= 1
 	}
 }
+
+// CompositeLimiter 组合限速器：令牌桶 + 双窗硬上限（10s/60s）
+type CompositeLimiter struct {
+	tb            *TokenBucketLimiter
+	window10sMax int
+	window60sMax int
+	mu           sync.Mutex
+	recent       []time.Time
+}
+
+func NewCompositeLimiter(rate float64, burst int, max10s, max60s int) *CompositeLimiter {
+	return &CompositeLimiter{
+		tb:            NewTokenBucketLimiter(rate, burst),
+		window10sMax: max10s,
+		window60sMax: max60s,
+		recent:       make([]time.Time, 0, 1024),
+	}
+}
+
+func (l *CompositeLimiter) Wait() {
+	for {
+		now := time.Now()
+		// 维护滑动窗口计数
+		l.mu.Lock()
+		cut10 := now.Add(-10 * time.Second)
+		cut60 := now.Add(-60 * time.Second)
+		pruned := l.recent[:0]
+		cnt10 := 0
+		cnt60 := 0
+		for _, t := range l.recent {
+			if t.After(cut60) {
+				pruned = append(pruned, t)
+				if t.After(cut10) {
+					cnt10++
+				}
+				cnt60++
+			}
+		}
+		l.recent = pruned
+		over := (l.window10sMax > 0 && cnt10 >= l.window10sMax) || (l.window60sMax > 0 && cnt60 >= l.window60sMax)
+		l.mu.Unlock()
+		if over {
+			time.Sleep(50 * time.Millisecond)
+			continue
+		}
+		// 令牌桶限速
+		l.tb.Wait()
+		// 记录本次请求
+		l.mu.Lock()
+		l.recent = append(l.recent, time.Now())
+		l.mu.Unlock()
+		return
+	}
+}

@@ -27,7 +27,7 @@ if [ $? -eq 0 ]; then
   echo "  用户名: admin"
   echo "  密码: admin"
   echo ""
-  echo "注意: 启动market-maker-go时请使用 -metricsAddr :8080 参数"
+  echo "注意: 启动 market-maker-go 时请确保指标端口为 :9199（例如 -metricsAddr :9199），以便 Prometheus 抓取。"
 else
   echo "启动失败，请检查错误信息"
   exit 1

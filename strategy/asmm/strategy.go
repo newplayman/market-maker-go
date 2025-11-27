@@ -75,7 +75,17 @@ func (s *ASMMStrategy) GenerateQuotes(snap market.Snapshot, inventory float64) [
 	}
 
 	// Calculate reservation price (mid price adjusted for inventory)
-	reservationPrice := snap.Mid - s.cfg.InvSkewK*(inventory-s.cfg.TargetPosition)*snap.Mid
+	// Use inventory ratio relative to soft limit to avoid extreme adjustments
+	invRatio := (inventory - s.cfg.TargetPosition) / invSoftLimit
+	if invRatio > 1.0 {
+		invRatio = 1.0
+	}
+	if invRatio < -1.0 {
+		invRatio = -1.0
+	}
+	// Use a smaller coefficient (0.01 = 1%) to avoid extreme price adjustments
+	// This means at max inventory (invRatio=1), price adjusts by InvSkewK%
+	reservationPrice := snap.Mid * (1 - s.cfg.InvSkewK*invRatio*0.01)
 
 	// Calculate skew factor based on inventory
 	skewFactor := 1.0 + math.Tanh(s.cfg.InvSkewK*(inventory-s.cfg.TargetPosition)/s.cfg.InvSoftLimit)
@@ -92,17 +102,18 @@ func (s *ASMMStrategy) GenerateQuotes(snap market.Snapshot, inventory float64) [
 	if bidPrice > 0 && size > 0 {
 		// Apply toxic flow reduce-only logic
 		reduceOnly := false
+		skipBid := false
 		if s.cfg.AvoidToxic && s.cfg.ToxicReduceOnly && snap.VPIN > s.cfg.VPINToxicThreshold {
 			if inventory < 0 {
+				// Short position - bid would reduce position, mark as reduce-only
 				reduceOnly = true
 			} else if inventory > 0 {
-				// Long position, skip bid to avoid increasing
-			} else {
-				reduceOnly = false
+				// Long position - bid would increase position, skip it
+				skipBid = true
 			}
 		}
 		// Only add bid if not suppressed by toxic logic
-		if inventory <= 0 || !s.cfg.ToxicReduceOnly || snap.VPIN <= s.cfg.VPINToxicThreshold {
+		if !skipBid {
 			quotes = append(quotes, Quote{
 				Price:      bidPrice,
 				Size:       size,
@@ -114,17 +125,18 @@ func (s *ASMMStrategy) GenerateQuotes(snap market.Snapshot, inventory float64) [
 
 	if askPrice > 0 && size > 0 {
 		reduceOnly := false
+		skipAsk := false
 		if s.cfg.AvoidToxic && s.cfg.ToxicReduceOnly && snap.VPIN > s.cfg.VPINToxicThreshold {
 			if inventory > 0 {
+				// Long position - ask would reduce position, mark as reduce-only
 				reduceOnly = true
 			} else if inventory < 0 {
-				// Short position, skip ask to avoid increasing
-			} else {
-				reduceOnly = false
+				// Short position - ask would increase position, skip it
+				skipAsk = true
 			}
 		}
 		// Only add ask if not suppressed by toxic logic
-		if inventory >= 0 || !s.cfg.ToxicReduceOnly || snap.VPIN <= s.cfg.VPINToxicThreshold {
+		if !skipAsk {
 			quotes = append(quotes, Quote{
 				Price:      askPrice,
 				Size:       size,
@@ -249,10 +261,9 @@ func (s *ASMMStrategy) calculateReservationPrice(mid float64, position float64) 
 		ratio = -1.0
 	}
 
-	// Reservation price adjustment factor
-	adjustment := s.cfg.InvSkewK * ratio * mid
-
-	return mid - adjustment
+	// Use a smaller coefficient (0.01 = 1%) to avoid extreme price adjustments
+	// This means at max inventory (invRatio=1), price adjusts by InvSkewK%
+	return mid * (1 - s.cfg.InvSkewK*ratio*0.01)
 }
 
 // calculateInventorySkewBps calculates the inventory skew in basis points.

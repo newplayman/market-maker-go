@@ -346,6 +346,73 @@ func (c *BinanceRESTClient) CancelAll(symbol string) error {
 	return nil
 }
 
+// OpenOrders 查询当前账户的活跃订单列表
+func (c *BinanceRESTClient) OpenOrders(symbol string) ([]FuturesOpenOrder, error) {
+	if c == nil || c.HTTPClient == nil {
+		return nil, fmt.Errorf("http client not set")
+	}
+	params := map[string]string{}
+	if symbol != "" {
+		params["symbol"] = strings.ToUpper(symbol)
+	}
+	c.applyRecvWindow(params)
+	query, sig := SignParams(params, c.Secret)
+	endpoint := c.BaseURL + "/fapi/v1/openOrders?" + query + "&signature=" + url.QueryEscape(sig)
+	headers := map[string]string{"X-MBX-APIKEY": c.APIKey}
+	resp, err := c.sendWithRetry(http.MethodGet, endpoint, headers)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("open orders status %d: %s", resp.StatusCode, bytes.TrimSpace(body))
+	}
+	var raw []struct {
+		Symbol        string `json:"symbol"`
+		OrderID       int64  `json:"orderId"`
+		ClientOrderID string `json:"clientOrderId"`
+		Price         string `json:"price"`
+		OrigQty       string `json:"origQty"`
+		ExecutedQty   string `json:"executedQty"`
+		Status        string `json:"status"`
+		Side          string `json:"side"`
+		Type          string `json:"type"`
+		UpdateTime    int64  `json:"updateTime"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+		return nil, err
+	}
+	out := make([]FuturesOpenOrder, 0, len(raw))
+	for _, r := range raw {
+		price, err := strconv.ParseFloat(r.Price, 64)
+		if err != nil {
+			return nil, fmt.Errorf("parse open order price: %w", err)
+		}
+		origQty, err := strconv.ParseFloat(r.OrigQty, 64)
+		if err != nil {
+			return nil, fmt.Errorf("parse open order origQty: %w", err)
+		}
+		executedQty, err := strconv.ParseFloat(r.ExecutedQty, 64)
+		if err != nil {
+			return nil, fmt.Errorf("parse open order executedQty: %w", err)
+		}
+		out = append(out, FuturesOpenOrder{
+			Symbol:        r.Symbol,
+			Side:          r.Side,
+			OrderType:     r.Type,
+			Status:        r.Status,
+			Price:         price,
+			OrigQty:       origQty,
+			ExecutedQty:   executedQty,
+			OrderID:       r.OrderID,
+			ClientOrderID: r.ClientOrderID,
+			UpdateTime:    r.UpdateTime,
+		})
+	}
+	return out, nil
+}
+
 // NewDefaultHTTPClient 提供一个带超时的 http.Client。
 func NewDefaultHTTPClient() *http.Client {
 	return &http.Client{Timeout: 10 * time.Second}
@@ -395,6 +462,20 @@ type FuturesAccount struct {
 	AvailableBalance      float64
 	Assets                []FuturesAccountAsset
 	Positions             []FuturesAccountPosition
+}
+
+// FuturesOpenOrder 描述 /fapi/v1/openOrders 返回的一条活跃订单
+type FuturesOpenOrder struct {
+	Symbol        string
+	Side          string
+	OrderType     string
+	Status        string
+	Price         float64
+	OrigQty       float64
+	ExecutedQty   float64
+	OrderID       int64
+	ClientOrderID string
+	UpdateTime    int64
 }
 
 // LeverageBracketEntry describes a single leverage bracket.
