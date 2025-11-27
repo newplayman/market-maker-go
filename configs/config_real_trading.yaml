@@ -3,8 +3,8 @@ risk:
   maxOrderValueUSDT: 30      # 最大单笔订单价值 (0.001 ETH * 3000 = 3 USDC)
   maxNetExposure: 30         # 最大净敞口 (0.01 ETH * 3000 = 30 USDC)
 gateway:
-  apiKey: "JDTnMB72CILecXzST7uex7qcvy185lFzzzItsoAim4o4NFa6Ey1bil6JGeXMZaeS"
-  apiSecret: "RvaTepu3VWxkR5FbE0LOf2C6gIrppNWjDwYeyalKM9SnVtr8yawLFBSf7rfT2rVI"
+  apiKey: "xxx"
+  apiSecret: "xxxx"
   baseURL: "https://fapi.binance.com"
 inventory:
   targetPosition: 0          # 目标持仓 0
