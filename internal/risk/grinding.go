@@ -13,15 +13,15 @@ import (
 
 // GrindingConfig 磨成本配置。
 type GrindingConfig struct {
-	Enabled              bool
-	TriggerRatio         float64 // 仓位 ≥ TriggerRatio * NetMax 才触发
-	RangeStdThreshold    float64 // 30分钟价格标准差阈值（<该值才横盘）
-	GrindSizePct         float64 // 每次磨成本的反向 taker 占当前仓位的百分比
-	ReentrySpreadBps     float64 // 磨成本后重新挂 maker 的有利偏移（基点）
-	MaxGrindPerHour      int
-	MinIntervalSec       int
-	FundingBoost         bool
-	FundingFavorMult     float64
+	Enabled           bool
+	TriggerRatio      float64 // 仓位 ≥ TriggerRatio * NetMax 才触发
+	RangeStdThreshold float64 // 30分钟价格标准差阈值（<该值才横盘）
+	GrindSizePct      float64 // 每次磨成本的反向 taker 占当前仓位的百分比
+	ReentrySpreadBps  float64 // 磨成本后重新挂 maker 的有利偏移（基点）
+	MaxGrindPerHour   int
+	MinIntervalSec    int
+	FundingBoost      bool
+	FundingFavorMult  float64
 }
 
 // GrindingEngine 磨成本引擎。
@@ -33,7 +33,10 @@ type GrindingEngine struct {
 	mu        sync.Mutex
 	grindLog  []time.Time
 	lastGrind time.Time
-	costSaved float64
+
+	costSaved         float64
+	baseSize          float64
+	pinSizeMultiplier float64
 }
 
 type OrderPlacer interface {
@@ -41,13 +44,15 @@ type OrderPlacer interface {
 	PlaceLimit(symbol, side string, price, qty float64) error
 }
 
-func NewGrindingEngine(cfg GrindingConfig, st *store.Store, netMax float64, placer OrderPlacer) *GrindingEngine {
+func NewGrindingEngine(cfg GrindingConfig, st *store.Store, netMax, baseSize, pinSizeMultiplier float64, placer OrderPlacer) *GrindingEngine {
 	return &GrindingEngine{
-		cfg:      cfg,
-		store:    st,
-		netMax:   netMax,
-		placer:   placer,
-		grindLog: make([]time.Time, 0, 100),
+		cfg:               cfg,
+		store:             st,
+		netMax:            netMax,
+		baseSize:          baseSize,
+		pinSizeMultiplier: pinSizeMultiplier,
+		placer:            placer,
+		grindLog:          make([]time.Time, 0, 100),
 	}
 }
 
@@ -132,8 +137,8 @@ func (g *GrindingEngine) MaybeGrind(position, mid float64) error {
 		return fmt.Errorf("grind market %s %.4f: %w", side, grindSize, err)
 	}
 
-	// 追 maker 单（size × 2.1）
-	reentQty := grindSize * 2.1
+	// 追 maker 单（使用钉子模式倍数）
+	reentQty := g.baseSize * g.pinSizeMultiplier
 	if err := g.placer.PlaceLimit(symbol, reentSide, reentPrice, reentQty); err != nil {
 		log.Printf("grind reentry limit %s %.4f @ %.2f failed: %v", reentSide, reentQty, reentPrice, err)
 	}

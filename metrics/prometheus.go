@@ -346,6 +346,35 @@ var (
 		Name: "mm_rest_fallback_count",
 		Help: "REST fallback usage count",
 	})
+	PendingExposure = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "mm_pending_exposure",
+		Help: "Pending order quantity grouped by side",
+	}, []string{"symbol", "side"})
+	RunnerRiskState = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "mm_runner_risk_state",
+		Help: "Runner risk state (0=normal,1=soft reduce,2=hard reduce)",
+	}, []string{"symbol"})
+	ReduceOnlyForceCount = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "mm_reduce_only_force_total",
+		Help: "Reduce-only forced market actions",
+	}, []string{"symbol"})
+
+	PinningActive = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "mm_pinning_active",
+		Help: "Pinning mode active (1=active, 0=inactive)",
+	})
+	FarQuotesCount = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "mm_far_quotes_count",
+		Help: "Number of far quotes placed",
+	})
+	QuoteFlickerRate = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "mm_quote_flicker_rate",
+		Help: "Quote flicker rate per minute",
+	})
+	FillRate5m = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "mm_fill_rate_5m",
+		Help: "Fill rate over last 5 minutes",
+	})
 )
 
 // UpdateMarketData 更新市场数据指标
@@ -375,6 +404,12 @@ func UpdatePositionMetrics(symbol string, position, entryPrice, unrealizedPnL, r
 func UpdateOrderMetrics(symbol string, activeBids, activeAsks int) {
 	ActiveOrders.WithLabelValues(symbol, "buy").Set(float64(activeBids))
 	ActiveOrders.WithLabelValues(symbol, "sell").Set(float64(activeAsks))
+}
+
+// UpdatePendingExposure 更新挂单敞口
+func UpdatePendingExposure(symbol string, pendingBuy, pendingSell float64) {
+	PendingExposure.WithLabelValues(symbol, "buy").Set(pendingBuy)
+	PendingExposure.WithLabelValues(symbol, "sell").Set(pendingSell)
 }
 
 // IncrementFill 成交计数

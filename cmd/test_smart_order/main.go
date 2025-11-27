@@ -64,7 +64,7 @@ func main() {
 	)
 
 	// 创建虚拟 store 和策略（用于生成测试订单）
-	st := store.New(cfg.Symbol, 0.25)
+	st := store.New(cfg.Symbol, 0.25, nil)
 	strat := strategy.NewGeometricV2(strategy.GeometricV2Config{
 		Symbol:           cfg.Symbol,
 		MinSpread:        0.0005,

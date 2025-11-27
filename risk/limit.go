@@ -19,18 +19,26 @@ type PositionKeeper interface {
 	GetDailyFilled(symbol string) float64
 }
 
+// PendingExposureProvider 暴露当前挂单尺寸（用于最坏敞口评估）
+type PendingExposureProvider interface {
+	PendingBuySize() float64
+	PendingSellSize() float64
+}
+
 // LimitChecker implements risk guard using static limits.
 type LimitChecker struct {
-	limits Limits
-	pos    PositionKeeper
-	mu     sync.Mutex
+	limits  Limits
+	pos     PositionKeeper
+	pending PendingExposureProvider
+	mu      sync.Mutex
 }
 
 // NewLimitChecker creates a limit checker with given limits.
-func NewLimitChecker(limits *Limits, pos PositionKeeper) *LimitChecker {
+func NewLimitChecker(limits *Limits, pos PositionKeeper, pending PendingExposureProvider) *LimitChecker {
 	return &LimitChecker{
-		limits: *limits,
-		pos:    pos,
+		limits:  *limits,
+		pos:     pos,
+		pending: pending,
 	}
 }
 
@@ -45,7 +53,7 @@ func (l *LimitChecker) PreOrder(symbol string, deltaQty float64) error {
 	}
 
 	// Daily limit
-	if l.limits.DailyMax > 0 {
+	if l.limits.DailyMax > 0 && l.pos != nil {
 		daily := l.pos.GetDailyFilled(symbol)
 		if daily+abs(deltaQty) > l.limits.DailyMax {
 			return fmt.Errorf("daily limit exceeded: %.4f + %.4f > %.4f", daily, abs(deltaQty), l.limits.DailyMax)
@@ -54,14 +62,39 @@ func (l *LimitChecker) PreOrder(symbol string, deltaQty float64) error {
 
 	// Net exposure limit
 	if l.limits.NetMax > 0 {
-		net := l.pos.NetExposure()
-		newNet := net + deltaQty
-		if abs(newNet) > l.limits.NetMax {
-			return fmt.Errorf("net exposure limit exceeded: |%.4f + %.4f| = %.4f > %.4f", net, deltaQty, abs(newNet), l.limits.NetMax)
+		net := 0.0
+		if l.pos != nil {
+			net = l.pos.NetExposure()
+		}
+		pBuy, pSell := l.pendingExposure()
+		if deltaQty > 0 {
+			worstLong := net + pBuy + deltaQty
+			if worstLong > l.limits.NetMax {
+				return fmt.Errorf("worst-case long exposure exceeded: net=%.4f pending=%.4f new=%.4f limit=%.4f",
+					net, pBuy, deltaQty, l.limits.NetMax)
+			}
+		} else if deltaQty < 0 {
+			worstShort := net - pSell + deltaQty
+			if abs(worstShort) > l.limits.NetMax {
+				return fmt.Errorf("worst-case short exposure exceeded: net=%.4f pending=%.4f new=%.4f limit=%.4f",
+					net, pSell, deltaQty, l.limits.NetMax)
+			}
+		} else {
+			if net+pBuy > l.limits.NetMax || abs(net-pSell) > l.limits.NetMax {
+				return fmt.Errorf("pending exposure already exceeds limit: long=%.4f short=%.4f limit=%.4f",
+					net+pBuy, abs(net-pSell), l.limits.NetMax)
+			}
 		}
 	}
 
 	return nil
+}
+
+func (l *LimitChecker) pendingExposure() (float64, float64) {
+	if l.pending == nil {
+		return 0, 0
+	}
+	return l.pending.PendingBuySize(), l.pending.PendingSellSize()
 }
 
 func abs(x float64) float64 {
@@ -70,4 +103,3 @@ func abs(x float64) float64 {
 	}
 	return x
 }
-

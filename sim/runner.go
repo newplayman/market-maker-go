@@ -278,7 +278,9 @@ func (r *Runner) OnTick(mid float64) error {
 					bid = bidLevel.Price
 					ask = askLevel.Price
 					size = bidLevel.Size
-					if askLevel.Size < size { size = askLevel.Size }
+					if askLevel.Size < size {
+						size = askLevel.Size
+					}
 				} else {
 					// fallback
 					quote := r.Engine.QuoteZeroInventory(snap, invWrapper{r.Inv})
@@ -1201,21 +1203,43 @@ func (r *Runner) submitOrderWithFallback(side string, ord order.Order, reduceOnl
 		return res, false, err
 	}
 	currentPostOnly := ord.PostOnly
-	triedFallback := false
+	maxRetries := 3 // 最多重试3次（加上初始尝试=4次总尝试）
+	attempts := 0
+	tick := r.Constraints.TickSize
+	if tick <= 0 {
+		tick = 0.01
+	}
 	for {
 		res, err := r.OrderMgr.Submit(ord)
+		attempts++
 		if err == nil {
 			return res, currentPostOnly, nil
 		}
-		if !reduceOnly && currentPostOnly && isPostOnlyReject(err) && !triedFallback {
-			r.enterPostOnlyCooldown(side)
-			r.bumpMakerShift(side)
-			metrics.IncrementPostOnlyRejectFallback(strings.ToLower(side))
-			currentPostOnly = false
-			ord.PostOnly = false
-			triedFallback = true
-			continue
+		if currentPostOnly && isPostOnlyReject(err) {
+			// 如果还没达到最大重试次数，继续重试（调整价格）
+			if attempts <= maxRetries {
+				r.bumpMakerShift(side)
+				metrics.IncrementPostOnlyRejectFallback(strings.ToLower(side))
+				if side == "BUY" {
+					ord.Price -= tick
+				} else {
+					ord.Price += tick
+				}
+				continue
+			}
+			// 达到最大重试次数
+			if reduceOnly {
+				// reduce-only订单：转为taker
+				r.enterPostOnlyCooldown(side)
+				currentPostOnly = false
+				ord.PostOnly = false
+				res, err = r.OrderMgr.Submit(ord)
+				return res, currentPostOnly, err
+			}
+			// 非reduce-only订单：返回错误
+			return nil, currentPostOnly, err
 		}
+		// 其他错误直接返回
 		return nil, currentPostOnly, err
 	}
 }

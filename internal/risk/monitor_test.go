@@ -2,6 +2,7 @@ package risk
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 )
@@ -240,11 +241,14 @@ func TestMonitor_TriggerEmergencyStop(t *testing.T) {
 	monitor := NewMonitor(config)
 
 	// 设置回调
+	var mu sync.Mutex
 	emergencyStopCalled := false
 	reason := ""
 	monitor.SetEmergencyStopCallback(func(r string) {
+		mu.Lock()
 		emergencyStopCalled = true
 		reason = r
+		mu.Unlock()
 	})
 
 	// 触发紧急停止
@@ -254,12 +258,15 @@ func TestMonitor_TriggerEmergencyStop(t *testing.T) {
 	// 等待回调执行
 	time.Sleep(10 * time.Millisecond)
 
+	mu.Lock()
 	if !emergencyStopCalled {
 		t.Error("expected emergency stop callback to be called")
 	}
 	if reason != testReason {
 		t.Errorf("expected reason '%s', got '%s'", testReason, reason)
 	}
+	mu.Unlock()
+
 	if state := monitor.GetRiskState(); state != RiskStateEmergency {
 		t.Errorf("expected EMERGENCY state, got %s", state)
 	}
@@ -376,12 +383,15 @@ func TestMonitor_RiskStateChangeCallback(t *testing.T) {
 	monitor := NewMonitor(config)
 
 	// 设置回调
+	var mu sync.Mutex
 	callbackTriggered := false
 	var oldState, newState RiskState
 	monitor.SetRiskStateChangeCallback(func(old, new RiskState) {
+		mu.Lock()
 		callbackTriggered = true
 		oldState = old
 		newState = new
+		mu.Unlock()
 	})
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -396,6 +406,7 @@ func TestMonitor_RiskStateChangeCallback(t *testing.T) {
 	// 等待监控循环检测到变化
 	time.Sleep(50 * time.Millisecond)
 
+	mu.Lock()
 	if !callbackTriggered {
 		t.Error("expected risk state change callback to be triggered")
 	}
@@ -405,6 +416,7 @@ func TestMonitor_RiskStateChangeCallback(t *testing.T) {
 	if newState != RiskStateEmergency {
 		t.Errorf("expected new state EMERGENCY, got %s", newState)
 	}
+	mu.Unlock()
 
 	monitor.Stop()
 }

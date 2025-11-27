@@ -49,6 +49,8 @@ type OrderUpdate struct {
 	CommissionAsset  string
 	CommissionAmount float64
 	PositionSide     string
+	EventTime        int64
+	UpdateTime       int64
 }
 
 // AccountUpdate 精简的资产/仓位更新。
@@ -109,22 +111,49 @@ func parseDepthPrice(entry interface{}) (float64, error) {
 	return 0, errors.New("unknown depth entry")
 }
 
+func toInt64FromInterface(val interface{}) int64 {
+	switch v := val.(type) {
+	case nil:
+		return 0
+	case float64:
+		return int64(v)
+	case string:
+		f, err := strconv.ParseFloat(v, 64)
+		if err != nil {
+			return 0
+		}
+		return int64(f)
+	case json.Number:
+		if i, err := v.Int64(); err == nil {
+			return i
+		}
+		if f, err := v.Float64(); err == nil {
+			return int64(f)
+		}
+	}
+	return 0
+}
+
 // ParseUserData 解析 combined stream 的用户事件。
 func ParseUserData(raw []byte) (UserEvent, error) {
-	var ev UserEvent
+	// 1) 先尝试解析 combined stream（含 stream/data 字段）
 	var msg CombinedMessage
-	if err := json.Unmarshal(raw, &msg); err != nil {
-		return ev, err
-	}
-	// listenKey 用户流的 stream 名一般不含 @，其余含 @ 的均视为公共行情。
-	if msg.Stream != "" && strings.Contains(msg.Stream, "@") {
-		return ev, ErrNonUserData
-	}
-	var header map[string]interface{}
-	if err := json.Unmarshal(msg.Data, &header); err != nil {
+	if err := json.Unmarshal(raw, &msg); err == nil {
 		if msg.Stream != "" && strings.Contains(msg.Stream, "@") {
-			return ev, ErrNonUserData
+			return UserEvent{}, ErrNonUserData
 		}
+		if len(msg.Data) > 0 {
+			return parseUserPayload(msg.Data)
+		}
+	}
+	// 2) 兼容普通 listenKey 连接：报文就是订单/账户JSON
+	return parseUserPayload(raw)
+}
+
+func parseUserPayload(data []byte) (UserEvent, error) {
+	var ev UserEvent
+	var header map[string]interface{}
+	if err := json.Unmarshal(data, &header); err != nil {
 		return ev, err
 	}
 	ev.EventType = toString(header["e"])
@@ -150,10 +179,15 @@ func ParseUserData(raw []byte) (UserEvent, error) {
 				PositionSide     string `json:"ps"`
 			} `json:"o"`
 		}
-		if err := json.Unmarshal(msg.Data, &payload); err != nil {
+		if err := json.Unmarshal(data, &payload); err != nil {
 			return ev, err
 		}
 		o := payload.Order
+		eventTime := toInt64FromInterface(header["E"])
+		var tradeTime int64
+		if orderHeader, ok := header["o"].(map[string]interface{}); ok {
+			tradeTime = toInt64FromInterface(orderHeader["T"])
+		}
 		ev.Order = &OrderUpdate{
 			Symbol:           o.Symbol,
 			Side:             o.Side,
@@ -171,6 +205,8 @@ func ParseUserData(raw []byte) (UserEvent, error) {
 			CommissionAsset:  o.CommissionAsset,
 			CommissionAmount: parseFloat(o.CommissionAmount),
 			PositionSide:     o.PositionSide,
+			EventTime:        eventTime,
+			UpdateTime:       tradeTime,
 		}
 	case "ACCOUNT_UPDATE":
 		var payload struct {
@@ -191,7 +227,7 @@ func ParseUserData(raw []byte) (UserEvent, error) {
 				} `json:"P"`
 			} `json:"a"`
 		}
-		if err := json.Unmarshal(msg.Data, &payload); err != nil {
+		if err := json.Unmarshal(data, &payload); err != nil {
 			return ev, err
 		}
 		acc := payload.Account

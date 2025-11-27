@@ -65,6 +65,7 @@ func BuildRunner(cfg RunnerConfig) (*Runner, error) {
 	guard := risk.BuildGuards(
 		&risk.Limits{SingleMax: cfg.SingleMax, DailyMax: cfg.DailyMax, NetMax: cfg.NetMax},
 		nil,
+		nil,
 		cfg.MaxSpreadRatio,
 		ob,
 		pnlGuard,

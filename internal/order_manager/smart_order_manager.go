@@ -7,9 +7,15 @@ import (
 	"sync"
 	"time"
 
-	"market-maker-go/gateway"
 	"market-maker-go/internal/strategy"
 )
+
+// LimitOrderClient 定义智能撮合需要使用的下单/撤单能力，便于注入WSS优先的实现。
+type LimitOrderClient interface {
+	PlaceLimit(symbol, side, tif string, price, qty float64, reduceOnly, postOnly bool, clientID string) (string, error)
+	CancelOrder(symbol, orderID string) error
+	CancelAll(symbol string) error
+}
 
 // OrderSnapshot 订单快照（记住上次下单状态）
 type OrderSnapshot struct {
@@ -24,18 +30,18 @@ type OrderSnapshot struct {
 // SmartOrderManagerConfig 智能订单管理配置
 type SmartOrderManagerConfig struct {
 	Symbol string
-	
+
 	// 价格偏移阈值（相对mid）
 	// 小波动：|理想价格 - 实际价格| / mid < PriceDeviationThreshold 则保持原单
 	PriceDeviationThreshold float64 // 推荐 0.0005 (0.05%)
-	
+
 	// 重组阈值（相对mid）
 	// 大波动：价格整体偏移超过此值时全量撤单重组
 	ReorganizeThreshold float64 // 推荐 0.003 (0.3%)
-	
+
 	// 最小撤单间隔（避免频繁撤单触发速率限制）
 	MinCancelInterval time.Duration // 推荐 2s
-	
+
 	// 订单老化阈值（超过此时间的订单即使价格未偏移也重新挂单）
 	OrderMaxAge time.Duration // 推荐 60s
 }
@@ -60,15 +66,15 @@ type opResult struct {
 // SmartOrderManager 智能订单管理器
 type SmartOrderManager struct {
 	cfg    SmartOrderManagerConfig
-	client *gateway.BinanceRESTClient
-	
-	mu              sync.RWMutex
-	buySnapshots    []OrderSnapshot  // 买单快照（按layer索引）
-	sellSnapshots   []OrderSnapshot  // 卖单快照
-	lastReorganize  time.Time        // 上次全量重组时间
-	lastCancelTime  time.Time        // 上次撤单时间
-	lastMidPrice    float64          // 上次中值价（用于检测大偏移）
-	cancelCounter   int              // 撤单计数器（监控用）
+	client LimitOrderClient
+
+	mu             sync.RWMutex
+	buySnapshots   []OrderSnapshot // 买单快照（按layer索引）
+	sellSnapshots  []OrderSnapshot // 卖单快照
+	lastReorganize time.Time       // 上次全量重组时间
+	lastCancelTime time.Time       // 上次撤单时间
+	lastMidPrice   float64         // 上次中值价（用于检测大偏移）
+	cancelCounter  int             // 撤单计数器（监控用）
 
 	// 队列调度
 	opsCh         chan orderOp
@@ -76,7 +82,7 @@ type SmartOrderManager struct {
 	coalesceDelay time.Duration
 }
 
-func NewSmartOrderManager(cfg SmartOrderManagerConfig, client *gateway.BinanceRESTClient) *SmartOrderManager {
+func NewSmartOrderManager(cfg SmartOrderManagerConfig, client LimitOrderClient) *SmartOrderManager {
 	m := &SmartOrderManager{
 		cfg:           cfg,
 		client:        client,
@@ -182,12 +188,12 @@ func (m *SmartOrderManager) collectBatch() []orderOp {
 func (m *SmartOrderManager) ReconcileOrders(targetBuys, targetSells []strategy.Quote, mid float64, dryRun bool) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	
+
 	now := time.Now()
-	
+
 	// 1. 检测是否需要全量重组（大幅价格偏移）
 	needReorganize := m.shouldReorganize(mid, now)
-	
+
 	if needReorganize {
 		log.Printf("[SmartOrderMgr] 触发全量重组: mid偏移=%.4f%%",
 			math.Abs(mid-m.lastMidPrice)/m.lastMidPrice*100)
@@ -199,17 +205,17 @@ func (m *SmartOrderManager) ReconcileOrders(targetBuys, targetSells []strategy.Q
 		m.buySnapshots = m.buySnapshots[:0]
 		m.sellSnapshots = m.sellSnapshots[:0]
 	}
-	
+
 	// 2. 差分更新买单
 	if err := m.reconcileSide("BUY", targetBuys, &m.buySnapshots, mid, dryRun); err != nil {
 		return err
 	}
-	
+
 	// 3. 差分更新卖单
 	if err := m.reconcileSide("SELL", targetSells, &m.sellSnapshots, mid, dryRun); err != nil {
 		return err
 	}
-	
+
 	return nil
 }
 
@@ -220,38 +226,38 @@ func (m *SmartOrderManager) shouldReorganize(mid float64, now time.Time) bool {
 		m.lastMidPrice = mid
 		return false
 	}
-	
+
 	// 价格大幅偏移
 	deviation := math.Abs(mid-m.lastMidPrice) / m.lastMidPrice
 	if deviation > m.cfg.ReorganizeThreshold {
 		return true
 	}
-	
+
 	// 长时间未重组（避免订单老化）
 	if m.cfg.OrderMaxAge > 0 && now.Sub(m.lastReorganize) > m.cfg.OrderMaxAge {
 		return true
 	}
-	
+
 	return false
 }
 
 // reconcileSide 对某一侧（BUY/SELL）进行差分更新
 func (m *SmartOrderManager) reconcileSide(side string, targets []strategy.Quote, snapshots *[]OrderSnapshot, mid float64, dryRun bool) error {
 	now := time.Now()
-	
+
 	// 扩展快照数组以匹配目标层数
 	for len(*snapshots) < len(targets) {
 		*snapshots = append(*snapshots, OrderSnapshot{Layer: len(*snapshots)})
 	}
-	
+
 	// 遍历每一层，决定是否需要更新
 	for i, target := range targets {
 		snap := &(*snapshots)[i]
-		
+
 		// 决策：是否需要撤单重挂
 		needUpdate := false
 		reason := ""
-		
+
 		// 情况1：首次下单
 		if snap.OrderID == "" {
 			needUpdate = true
@@ -264,20 +270,20 @@ func (m *SmartOrderManager) reconcileSide(side string, targets []strategy.Quote,
 				needUpdate = true
 				reason = "价格偏离"
 			}
-			
+
 			// 情况3：数量变化（可能被部分成交）
 			if math.Abs(target.Size-snap.Size)/target.Size > 0.2 { // 20%变化
 				needUpdate = true
 				reason = "数量变化"
 			}
-			
+
 			// 情况4：订单过老
 			if m.cfg.OrderMaxAge > 0 && now.Sub(snap.PlacedAt) > m.cfg.OrderMaxAge {
 				needUpdate = true
 				reason = "订单老化"
 			}
 		}
-		
+
 		if needUpdate {
 			// 先撤旧单
 			if snap.OrderID != "" {
@@ -286,7 +292,7 @@ func (m *SmartOrderManager) reconcileSide(side string, targets []strategy.Quote,
 					// 继续处理，不中断
 				}
 			}
-			
+
 			// 下新单
 			if err := m.placeOrder(target, snap, mid, dryRun); err != nil {
 				log.Printf("[SmartOrderMgr] 下单失败 %s layer=%d: %v", side, i, err)
@@ -294,12 +300,12 @@ func (m *SmartOrderManager) reconcileSide(side string, targets []strategy.Quote,
 				snap.OrderID = ""
 				continue
 			}
-			
+
 			log.Printf("[SmartOrderMgr] 更新 %s layer=%d [%s]: %.4f@%.2f",
 				side, i, reason, target.Size, target.Price)
 		}
 	}
-	
+
 	// 取消多余的旧单（目标层数减少时）
 	for i := len(targets); i < len(*snapshots); i++ {
 		snap := &(*snapshots)[i]
@@ -310,12 +316,12 @@ func (m *SmartOrderManager) reconcileSide(side string, targets []strategy.Quote,
 			snap.OrderID = ""
 		}
 	}
-	
+
 	// 收缩快照数组
 	if len(targets) < len(*snapshots) {
 		*snapshots = (*snapshots)[:len(targets)]
 	}
-	
+
 	return nil
 }
 
@@ -323,7 +329,7 @@ func (m *SmartOrderManager) reconcileSide(side string, targets []strategy.Quote,
 func (m *SmartOrderManager) placeOrder(q strategy.Quote, snap *OrderSnapshot, mid float64, dryRun bool) error {
 	const tick = 0.01
 	const step = 0.001
-	
+
 	// 精度对齐
 	price := q.Price
 	if q.Side == "BUY" {

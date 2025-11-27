@@ -25,4 +25,4 @@ scrape_configs:
   # Market Maker Go监控
   - job_name: 'market-maker-go'
     static_configs:
-    - targets: ['172.19.0.1:9102'] # market-maker-go metrics 端口 (Docker网关访问宿主机)
+    - targets: ['host.docker.internal:9199'] # 监听宿主机 runner 暴露的 :9199 指标端口

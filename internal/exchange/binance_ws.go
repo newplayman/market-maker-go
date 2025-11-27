@@ -31,8 +31,10 @@ type BinanceUserStream struct {
 	ctx          context.Context
 	cancel       context.CancelFunc
 	onConnected  func()
+	onFatalError func(error)
 	maxRetries   int
 	retryBackoff time.Duration
+	eventSink    func(string, map[string]interface{})
 }
 
 func NewBinanceUserStream(baseURL, wsEndpoint, apiKey, apiSecret string, st *store.Store) *BinanceUserStream {
@@ -93,6 +95,16 @@ func (b *BinanceUserStream) Stop() {
 	b.mu.Unlock()
 }
 
+// SetEventSink 设置事件回调（例如记录连接状态）
+func (b *BinanceUserStream) SetEventSink(fn func(string, map[string]interface{})) {
+	b.eventSink = fn
+}
+
+// SetFatalErrorHandler 设置致命错误回调（用于通知主程序触发优雅退出）
+func (b *BinanceUserStream) SetFatalErrorHandler(fn func(error)) {
+	b.onFatalError = fn
+}
+
 // runKeepalive 每 25 分钟 PUT keepalive。
 func (b *BinanceUserStream) runKeepalive() {
 	ticker := time.NewTicker(25 * time.Minute)
@@ -124,7 +136,11 @@ func (b *BinanceUserStream) runWS() {
 		conn, _, err := dialer.Dial(u.String(), nil)
 		if err != nil {
 			if retries >= b.maxRetries {
-				log.Printf("ws dial exceeded max retries, stopping")
+				fatalErr := fmt.Errorf("websocket reconnection failed after %d retries: %w", b.maxRetries, err)
+				log.Printf("❌ %v", fatalErr)
+				if b.onFatalError != nil {
+					b.onFatalError(fatalErr)
+				}
 				return
 			}
 			retries++
@@ -139,13 +155,18 @@ func (b *BinanceUserStream) runWS() {
 
 		metrics.WSConnected.Set(1)
 		log.Println("WebSocket UserStream connected")
-		
+		if b.eventSink != nil {
+			b.eventSink("ws_connected", map[string]interface{}{
+				"listenKey": b.listenKey,
+			})
+		}
+
 		// 关键修复：重连后立即同步订单状态（防止状态不一致）
 		if err := b.syncOrderState(); err != nil {
 			log.Printf("⚠️ 订单状态同步失败: %v", err)
 			metrics.RestFallbackCount.Inc()
 		}
-		
+
 		if b.onConnected != nil {
 			b.onConnected()
 		}
@@ -160,6 +181,9 @@ func (b *BinanceUserStream) runWS() {
 		b.mu.Unlock()
 		metrics.WSConnected.Set(0)
 		log.Println("WebSocket UserStream disconnected, reconnecting...")
+		if b.eventSink != nil {
+			b.eventSink("ws_disconnected", map[string]interface{}{})
+		}
 		time.Sleep(b.retryBackoff)
 	}
 }
@@ -217,13 +241,13 @@ func (b *BinanceUserStream) syncOrderState() error {
 	if b.restClient == nil {
 		return fmt.Errorf("rest client not initialized")
 	}
-	
+
 	// 1. 从交易所查询当前活跃订单
 	info, err := b.restClient.AccountInfo()
 	if err != nil {
 		return fmt.Errorf("query account info: %w", err)
 	}
-	
+
 	// 2. 更新本地仓位状态
 	for _, p := range info.Positions {
 		if p.Symbol == b.store.Symbol {
@@ -240,7 +264,7 @@ func (b *BinanceUserStream) syncOrderState() error {
 			break
 		}
 	}
-	
+
 	// 3. 查询活跃订单并同步到store（关键！）
 	// 注意：这里使用REST API查询未成交订单
 	openOrders, err := b.getOpenOrders(b.store.Symbol)
@@ -248,15 +272,11 @@ func (b *BinanceUserStream) syncOrderState() error {
 		log.Printf("⚠️ 查询活跃订单失败: %v", err)
 		return err
 	}
-	
+
 	log.Printf("订单同步: 发现 %d 个活跃订单", len(openOrders))
-	
 	// 4. 更新store中的pending orders
-	for _, o := range openOrders {
-		b.store.HandleOrderUpdate(o)
-	}
-	
-	log.Println("✅ 订单状态同步完成")
+	b.store.ReplacePendingOrders(openOrders)
+	log.Printf("✅ 订单状态同步完成（BUY: %.4f, SELL: %.4f）", b.store.PendingBuySize(), b.store.PendingSellSize())
 	return nil
 }
 
@@ -265,9 +285,24 @@ func (b *BinanceUserStream) getOpenOrders(symbol string) ([]gateway.OrderUpdate,
 	if b.restClient == nil {
 		return nil, fmt.Errorf("rest client not initialized")
 	}
-	
-	// 这里简化处理，直接返回空列表（生产环境需要完整实现）
-	// 真实场景可以调用 restClient.QueryOpenOrders() 并转换为 OrderUpdate
-	// TODO: 完善订单同步逻辑
-	return []gateway.OrderUpdate{}, nil
+	rawOrders, err := b.restClient.OpenOrders(symbol)
+	if err != nil {
+		return nil, err
+	}
+	updates := make([]gateway.OrderUpdate, 0, len(rawOrders))
+	for _, ro := range rawOrders {
+		updates = append(updates, gateway.OrderUpdate{
+			Symbol:         ro.Symbol,
+			Side:           ro.Side,
+			OrderType:      ro.OrderType,
+			Status:         ro.Status,
+			OrderID:        ro.OrderID,
+			ClientOrderID:  ro.ClientOrderID,
+			Price:          ro.Price,
+			OrigQty:        ro.OrigQty,
+			AccumulatedQty: ro.ExecutedQty,
+			UpdateTime:     ro.UpdateTime,
+		})
+	}
+	return updates, nil
 }

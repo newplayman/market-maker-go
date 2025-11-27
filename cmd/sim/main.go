@@ -57,7 +57,7 @@ func main() {
 	}
 	base := 100.0
 	var guards []risk.Guard
-	guards = append(guards, risk.NewLimitChecker(&risk.Limits{SingleMax: *singleMax, DailyMax: *dailyMax, NetMax: *netMax}, nil))
+	guards = append(guards, risk.NewLimitChecker(&risk.Limits{SingleMax: *singleMax, DailyMax: *dailyMax, NetMax: *netMax}, nil, nil))
 	if *latencyMs > 0 {
 		guards = append(guards, risk.NewLatencyGuard(time.Duration(*latencyMs)*time.Millisecond))
 	}

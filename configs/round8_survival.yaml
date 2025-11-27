@@ -5,6 +5,7 @@ quote_interval_ms: 220
 base_size: 0.007
 net_max: 0.20                          # 硬帽，绝对不能改大
 min_spread: 0.00065
+margin_type: ISOLATED
 
 # ===== 几何网格（保留你原来写法）=====
 layer_spacing_mode: geometric
@@ -25,8 +26,8 @@ funding:
 # ===== 磨成本核武器 =====
 grinding:
   enabled: true
-  trigger_ratio: 0.87                  # 仓位 ≥87% net_max 触发
-  range_std_threshold: 0.0038          # 30分钟价格标准差阈值（<0.38% 才磨）
+  trigger_ratio: 0.58                  # 仓位 ≥58% net_max 触发（≈0.12 ETH）
+  range_std_threshold: 0.0050          # 30分钟价格标准差阈值（<0.5% 才磨）
   grind_size_pct: 0.075                # 每次反向 taker 7.5% 仓位
   reentry_spread_bps: 4.2              # 重新挂 maker 单的有利偏移
   max_grind_per_hour: 18
@@ -34,8 +35,26 @@ grinding:
   funding_boost: true
   funding_favor_multiplier: 1.4
 
+# ===== 风控调优 =====
+risk:
+  reduce_only_soft_multiplier: 4      # 约等于 4 × base_size (≈0.028 ETH) 即启动减仓
+  reduce_only_hard_multiplier: 8      # 约等于 8 × base_size 时进入硬减仓
+  reduce_only_market_multiplier: 2    # 强制减仓时一次性下 2 × base_size
+
 # ===== 分层减仓（放宽，减少误触发）=====
 drawdown_bands: [6.0, 11.0, 17.0]
 reduce_fractions: [0.25, 0.45, 0.80]
 twap_slices: 4
 twap_interval_ms: 1200
+
+# ===== Round8防闪烁：钉子模式 =====
+quote_pinning:
+  enabled: true                        # 启用钉子模式
+  trigger_ratio: 0.70                  # 仓位≥70% net_max时触发
+  near_layers: 8                       # 前 8 层用动态 size（防扫单）
+  far_layers: 16                       # 后 16 层用固定大单（抗单边）
+  far_layer_fixed_size: 0.08           # 远层固定下单 0.08 手（ETH 约 280 USDC）
+  far_layer_min_distance_pct: 0.048    # 远层最小距 mid 4.8%（防早被吃）
+  far_layer_max_distance_pct: 0.12     # 远层最远距 mid 12%
+  pin_to_best_tick: true               # 钉子模式下强制挂在最优买/卖价
+  pin_size_multiplier: 2.3             # 钉子时反向挂单放大 2.3 倍

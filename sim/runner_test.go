@@ -83,7 +83,7 @@ func TestRunnerWithRisk(t *testing.T) {
 	tr := &inventory.Tracker{}
 	gw := &stubGateway{}
 	mgr := order.NewManager(gw)
-	guard := risk.NewLimitChecker(&risk.Limits{SingleMax: 2, DailyMax: 10, NetMax: 5}, nil)
+	guard := risk.NewLimitChecker(&risk.Limits{SingleMax: 2, DailyMax: 10, NetMax: 5}, nil, nil)
 	r := Runner{
 		Symbol:   "BTCUSDT",
 		Engine:   engine,
@@ -446,11 +446,11 @@ func TestPlanReduceOnlyUsesBestOpposite(t *testing.T) {
 		ReduceOnlyMaxSlippage: 0.01,
 	}
 	r.Book.ApplyDelta(map[float64]float64{99: 5, 98.5: 3}, map[float64]float64{101: 4, 101.5: 6})
-	plan := r.planReduceOnlyPrice(true, 100, 98, 1, false)
+	plan := r.planReduceOnlyPrice(true, 100, 98, 1)
 	if plan.price < 101 {
 		t.Fatalf("expected plan price >= best ask, got %.2f", plan.price)
 	}
-	planSell := r.planReduceOnlyPrice(false, 100, 102, 1, false)
+	planSell := r.planReduceOnlyPrice(false, 100, 102, 1)
 	if planSell.price > 99 {
 		t.Fatalf("expected plan price <= best bid, got %.2f", planSell.price)
 	}
