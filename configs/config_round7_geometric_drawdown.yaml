@@ -5,8 +5,8 @@ risk:
   maxNetExposure: 200
 
 gateway:
-  apiKey: "JDTnMB72CILecXzST7uex7qcvy185lFzzzItsoAim4o4NFa6Ey1bil6JGeXMZaeS"
-  apiSecret: "RvaTepu3VWxkR5FbE0LOf2C6gIrppNWjDwYeyalKM9SnVtr8yawLFBSf7rfT2rVI"
+  apiKey: "xxx"
+  apiSecret: "xxx"
   baseURL: "https://fapi.binance.com"
 
 inventory:
