@@ -34,6 +34,7 @@ grinding:
   min_interval_sec: 42
   funding_boost: true
   funding_favor_multiplier: 1.4
+tick_size: 0.01                    # 价格最小变动单位
 
 # ===== 风控调优 =====
 risk:

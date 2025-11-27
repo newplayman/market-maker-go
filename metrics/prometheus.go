@@ -375,6 +375,10 @@ var (
 		Name: "mm_fill_rate_5m",
 		Help: "Fill rate over last 5 minutes",
 	})
+	FundingRate = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "mm_funding_rate_current",
+		Help: "Current funding rate",
+	})
 )
 
 // UpdateMarketData 更新市场数据指标

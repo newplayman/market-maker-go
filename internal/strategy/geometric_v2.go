@@ -3,6 +3,7 @@ package strategy
 import (
 	"math"
 
+	"market-maker-go/internal/risk"
 	"market-maker-go/internal/store"
 	"market-maker-go/metrics"
 )
@@ -32,6 +33,7 @@ type GeometricV2Config struct {
 	MaxLayers        int
 	WorstCaseMult    float64 // worst-case 允许超挂倍率
 	SizeDecayK       float64 // 指数衰减系数
+	TickSize         float64 // 价格最小变动单位
 
 	QuotePinning QuotePinningConfig // Round8 新增
 }
@@ -40,12 +42,14 @@ type GeometricV2Config struct {
 type GeometricV2 struct {
 	cfg   GeometricV2Config
 	store *store.Store
+	guard *risk.Guard
 }
 
-func NewGeometricV2(cfg GeometricV2Config, st *store.Store) *GeometricV2 {
+func NewGeometricV2(cfg GeometricV2Config, st *store.Store, g *risk.Guard) *GeometricV2 {
 	return &GeometricV2{
 		cfg:   cfg,
 		store: st,
+		guard: g,
 	}
 }
 
@@ -81,13 +85,31 @@ func (s *GeometricV2) GenerateQuotes(position, mid float64) (bids, asks []Quote)
 	metrics.PinningActive.Set(0)
 
 	// ──────── 2. 正常情况：分段报价（近端防扫单，远端抗单边）───────
-	// 前 8 层：用原来的动态指数衰减（防扫单）
-	bids = append(bids, s.generateNearQuotes("BUY", cfg.NearLayers, mid)...)
-	asks = append(asks, s.generateNearQuotes("SELL", cfg.NearLayers, mid)...)
 
-	// 后 16 层：固定大单，价格拉远（抗单边）
-	bids = append(bids, s.generateFarQuotes("BUY", cfg.FarLayers, mid)...)
-	asks = append(asks, s.generateFarQuotes("SELL", cfg.FarLayers, mid)...)
+	// 风控检查：是否允许开仓
+	allowBuy := s.guard == nil || s.guard.CheckWorstCase("BUY", pos)
+	allowSell := s.guard == nil || s.guard.CheckWorstCase("SELL", pos)
+
+	if allowBuy {
+		// 前 8 层：用原来的动态指数衰减（防扫单）
+		bids = append(bids, s.generateNearQuotes("BUY", cfg.NearLayers, mid)...)
+		// 后 16 层：固定大单，价格拉远（抗单边）
+		bids = append(bids, s.generateFarQuotes("BUY", cfg.FarLayers, mid)...)
+	} else {
+		// 触发风控：停止买入报价（SmartOrderManager会自动撤单）
+		metrics.QuoteSuppressed.Set(1)
+	}
+
+	if allowSell {
+		asks = append(asks, s.generateNearQuotes("SELL", cfg.NearLayers, mid)...)
+		asks = append(asks, s.generateFarQuotes("SELL", cfg.FarLayers, mid)...)
+	} else {
+		metrics.QuoteSuppressed.Set(1)
+	}
+
+	if allowBuy && allowSell {
+		metrics.QuoteSuppressed.Set(0)
+	}
 
 	return bids, asks
 }
@@ -172,8 +194,8 @@ func (s *GeometricV2) calculateDynamicSize(side string, layer int) float64 {
 }
 
 func (s *GeometricV2) roundToTick(price float64) float64 {
-	// 简单处理，保留5位小数 (ETHUSDC 0.01)
-	// 实际应该从 SymbolInfo 获取 tickSize
-	// 这里假设 tickSize = 0.01
-	return math.Round(price*100) / 100
+	if s.cfg.TickSize <= 0 {
+		return price
+	}
+	return math.Round(price/s.cfg.TickSize) * s.cfg.TickSize
 }

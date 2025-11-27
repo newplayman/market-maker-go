@@ -364,28 +364,32 @@ func (s *Store) UpdateDepth(bid, ask float64, ts time.Time) {
 	metrics.UpdateMarketData(s.Symbol, mid, bid, ask)
 }
 
-// HandleFundingRate 外部资金费率事件回调。
+// HandleFundingRate 更新资金费率预测与累计盈亏
 func (s *Store) HandleFundingRate(rate float64) {
 	s.mu.Lock()
-	// EMA 预测
+	defer s.mu.Unlock()
+	// EMA 更新预测费率
 	if s.predictedFundingRate == 0 {
 		s.predictedFundingRate = rate
 	} else {
-		s.predictedFundingRate = s.alpha*rate + (1-s.alpha)*s.predictedFundingRate
+		s.predictedFundingRate = s.predictedFundingRate*(1-s.alpha) + rate*s.alpha
 	}
-	// 粗略计费：position * mid * rate
-	delta := s.position * s.mid * rate
-	s.fundingPnlAcc += delta
-	pf := s.predictedFundingRate
-	acc := s.fundingPnlAcc
-	s.mu.Unlock()
-	metrics.PredictedFundingRate.Set(pf)
-	metrics.FundingPnlAccum.Set(acc)
+
+	// 计算本次资金费盈亏 (负费率 = 多头赚钱)
+	// PnL = -Position * Rate * Price
+	// 注意：这里简化计算，直接用当前仓位和mid估算
+	pnl := -s.position * rate * s.mid
+	s.fundingPnlAcc += pnl
+
+	metrics.FundingRate.Set(rate)
+	metrics.PredictedFundingRate.Set(s.predictedFundingRate)
+	metrics.FundingPnlAccum.Set(s.fundingPnlAcc)
+
 	s.logEvent("funding_update", map[string]interface{}{
 		"symbol":         s.Symbol,
 		"rate":           rate,
-		"predicted_rate": pf,
-		"accum_pnl":      acc,
+		"predicted_rate": s.predictedFundingRate,
+		"accum_pnl":      s.fundingPnlAcc,
 	})
 }
 

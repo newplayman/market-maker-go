@@ -37,7 +37,9 @@ type Round8Config struct {
 	QuoteIntervalMs int     `yaml:"quote_interval_ms"`
 	BaseSize        float64 `yaml:"base_size"`
 	NetMax          float64 `yaml:"net_max"`
-	MinSpread       float64 `yaml:"min_spread"`
+
+	MinSpread float64 `yaml:"min_spread"`
+	TickSize  float64 `yaml:"tick_size"`
 
 	LayerSpacingMode string  `yaml:"layer_spacing_mode"`
 	SpacingRatio     float64 `yaml:"spacing_ratio"`
@@ -272,7 +274,9 @@ func main() {
 		LayerSizeDecay:   cfg.LayerSizeDecay,
 		MaxLayers:        cfg.MaxLayers,
 		WorstCaseMult:    cfg.WorstCase.Multiplier,
-		SizeDecayK:       cfg.WorstCase.SizeDecayK,
+
+		SizeDecayK: cfg.WorstCase.SizeDecayK,
+		TickSize:   cfg.TickSize,
 		QuotePinning: strategy.QuotePinningConfig{
 			Enabled:                cfg.QuotePinning.Enabled,
 			TriggerRatio:           cfg.QuotePinning.TriggerRatio,
@@ -285,7 +289,10 @@ func main() {
 			PinSizeMultiplier:      cfg.QuotePinning.PinSizeMultiplier,
 		},
 	}
-	strat := strategy.NewGeometricV2(stratCfg, st)
+	// P0修复：初始化风控卫士 (Pending Awareness)
+	guard := risk.NewGuard(cfg.NetMax, cfg.WorstCase.Multiplier, st)
+
+	strat := strategy.NewGeometricV2(stratCfg, st, guard)
 
 	// 创建智能订单管理器（避免频繁撤单触发币安速率限制）
 	limitClient := &wsLimitClient{
@@ -303,6 +310,12 @@ func main() {
 		},
 		limitClient,
 	)
+
+	// P0修复：WS重连时强制重组订单管理器
+	ws.OnReconnect = func() {
+		log.Println("🔄 WS重连触发：强制重组智能订单管理器")
+		smartOrderMgr.ForceReorganize()
+	}
 
 	// 创建磨成本引擎
 	grindCfg := risk.GrindingConfig{

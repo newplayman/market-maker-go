@@ -32,6 +32,7 @@ type BinanceUserStream struct {
 	cancel       context.CancelFunc
 	onConnected  func()
 	onFatalError func(error)
+	OnReconnect  func() // P0修复：重连回调
 	maxRetries   int
 	retryBackoff time.Duration
 	eventSink    func(string, map[string]interface{})
@@ -169,6 +170,10 @@ func (b *BinanceUserStream) runWS() {
 
 		if b.onConnected != nil {
 			b.onConnected()
+		}
+		// P0修复：触发外部重连回调（如重置SmartOrderManager）
+		if b.OnReconnect != nil {
+			b.OnReconnect()
 		}
 		retries = 0
 
